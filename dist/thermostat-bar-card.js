@@ -92,7 +92,7 @@ class ThermostatBarCard extends HTMLElement {
       name: null,
       lock_entity: null,
       height: 56,
-      edge_space: 92,
+      edge_space: 76,
       tolerance: 0.2,
       show_labels: true,
       show_status: true,
@@ -173,8 +173,21 @@ class ThermostatBarCard extends HTMLElement {
 
   _formatieren(wert) {
     if (wert === null || wert === undefined || isNaN(wert)) return "--";
-    const einheit = this._hass.config.unit_system.temperature || "°C";
-    return `${Number(wert).toFixed(1).replace(".", this._dezimaltrennzeichen())} ${einheit}`;
+    return `${this._zahlteil(wert)} ${this._einheit()}`;
+  }
+
+  /** Zahl gross, Einheit klein und hochgestellt. */
+  _formatierenHtml(wert) {
+    if (wert === null || wert === undefined || isNaN(wert)) return "--";
+    return `${this._zahlteil(wert)}<span class="einheit">${this._einheit()}</span>`;
+  }
+
+  _zahlteil(wert) {
+    return Number(wert).toFixed(1).replace(".", this._dezimaltrennzeichen());
+  }
+
+  _einheit() {
+    return this._hass.config.unit_system.temperature || "°C";
   }
 
   _dezimaltrennzeichen() {
@@ -222,7 +235,7 @@ class ThermostatBarCard extends HTMLElement {
         .head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
         .head-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
         .name {
-          font-size: 1.05rem; font-weight: 600; overflow: hidden;
+          font-size: 1.12rem; font-weight: 600; overflow: hidden;
           text-overflow: ellipsis; white-space: nowrap;
         }
         .lock {
@@ -237,7 +250,7 @@ class ThermostatBarCard extends HTMLElement {
 
         .status {
           display: inline-flex; align-items: center; gap: 6px;
-          font-size: 0.92rem; white-space: nowrap;
+          font-size: 0.98rem; white-space: nowrap;
           color: ${f.status_idle};
         }
         .status ha-icon { --mdc-icon-size: 18px; }
@@ -270,7 +283,11 @@ class ThermostatBarCard extends HTMLElement {
         .lbl {
           position: absolute; top: 50%; transform: translateY(-50%);
           white-space: nowrap; pointer-events: none;
-          font-size: 0.98rem; font-variant-numeric: tabular-nums;
+          font-size: 1.2rem; font-variant-numeric: tabular-nums;
+        }
+        .einheit {
+          font-size: 0.58em; vertical-align: super;
+          margin-left: 2px; letter-spacing: 0.02em;
         }
         .lbl.ist { color: ${f.label_current}; }
         .lbl.soll { color: ${f.label_target}; font-weight: 600; }
@@ -281,9 +298,9 @@ class ThermostatBarCard extends HTMLElement {
           display: inline-flex; align-items: center; justify-content: center; gap: 7px;
           border: 1px solid ${f.mode_inactive}; border-radius: 8px;
           background: transparent; color: var(--primary-text-color);
-          font: inherit; font-size: 1rem; cursor: pointer;
+          font: inherit; font-size: 1.06rem; cursor: pointer;
         }
-        .modes button ha-icon { --mdc-icon-size: 21px; }
+        .modes button ha-icon { --mdc-icon-size: 22px; }
         .modes button[aria-pressed="true"] { font-weight: 600; color: #16181a; }
         .modes button[aria-pressed="true"][data-mode="auto"] { background: ${f.mode_auto}; border-color: ${f.mode_auto}; }
         .modes button[aria-pressed="true"][data-mode="heat"],
@@ -479,8 +496,8 @@ class ThermostatBarCard extends HTMLElement {
     const el = this._el;
     const rand = this._config.edge_space;
 
-    el.istLbl.textContent = this._formatieren(ist);
-    el.sollLbl.textContent = this._formatieren(soll);
+    el.istLbl.innerHTML = this._formatierenHtml(ist);
+    el.sollLbl.innerHTML = this._formatierenHtml(soll);
 
     const istBreite = el.istLbl.offsetWidth;
     const sollBreite = el.sollLbl.offsetWidth;
@@ -634,7 +651,7 @@ class ThermostatBarCard extends HTMLElement {
     `;
 
     const wert = box.querySelector(".wert");
-    wert.textContent = this._formatieren(this._soll);
+    wert.innerHTML = this._formatierenHtml(this._soll);
 
     box.addEventListener("click", (ereignis) => {
       const knopf = ereignis.target.closest("button");
@@ -648,7 +665,7 @@ class ThermostatBarCard extends HTMLElement {
         this._max,
         Math.max(this._min, (this._soll || this._min) + richtung * this._schritt)
       );
-      wert.textContent = this._formatieren(neu);
+      wert.innerHTML = this._formatierenHtml(neu);
       this._sollSenden(neu);
     });
 
