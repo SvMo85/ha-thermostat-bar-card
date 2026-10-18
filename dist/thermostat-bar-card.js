@@ -542,13 +542,14 @@ class ThermostatBarCard extends HTMLElement {
 
   _sperreUmschalten() {
     const id = this._config.lock_entity;
-    const bereich = id.split(".")[0];
-    const dienst = bereich === "lock" ? "lock" : "homeassistant";
-    if (bereich === "lock") {
-      const gesperrt = this._hass.states[id].state === "locked";
+    const zustand = this._hass.states[id];
+    if (!zustand) return;
+
+    if (id.startsWith("lock.")) {
+      const gesperrt = zustand.state === "locked";
       this._hass.callService("lock", gesperrt ? "unlock" : "lock", { entity_id: id });
     } else {
-      this._hass.callService(dienst, "toggle", { entity_id: id });
+      this._hass.callService("homeassistant", "toggle", { entity_id: id });
     }
   }
 
