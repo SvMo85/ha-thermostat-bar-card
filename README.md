@@ -4,6 +4,8 @@ Waagerechte Thermostat-Karte für Home Assistant. Die Füllung zeigt die Ist-Tem
 
 Entstanden, weil die eingebaute Thermostat-Karte ihren Rundregler zugleich als Bedienfläche nutzt: Wird sie flach genug für ein Dashboard, ist sie am Telefon nicht mehr zu treffen. Eine Leiste trennt beides — sie bleibt flach und behält fingergerechte Bedienflächen.
 
+![Karte im Heizbetrieb: Ist-Füllung in Petrol, Glutfläche bis zum Sollwert, glühende Markierung](https://raw.githubusercontent.com/SvMo85/ha-thermostat-bar-card/main/images/karte-heizt.png)
+
 ## Bedienung
 
 Die Leiste in der Karte ist **reine Anzeige**. Sie fängt keine Wischgeste ab, deshalb lässt sich über einem Dashboard voller solcher Karten ungestört scrollen, ohne versehentlich eine Temperatur zu verstellen.
@@ -12,6 +14,8 @@ Die Leiste in der Karte ist **reine Anzeige**. Sie fängt keine Wischgeste ab, d
 - Im Bearbeitungsmodus erscheint dieselbe Leiste noch einmal, dort **ziehbar**, darunter große **Plus- und Minus-Flächen** und ein **Fertig**-Knopf.
 - Schließen durch Tippen daneben oder über **Fertig**.
 - Über Tastatur: Leiste fokussieren, dann Eingabe oder Leertaste.
+
+![Bearbeitungsmodus mit ziehbarer Leiste, Plus- und Minus-Flächen und Fertig-Knopf](https://raw.githubusercontent.com/SvMo85/ha-thermostat-bar-card/main/images/bearbeiten.png)
 
 ## Installation
 
