@@ -217,6 +217,10 @@ class ThermostatBarCard extends HTMLElement {
   }
 
   _geruestBauen() {
+    // Ein offener Bearbeitungsmodus gehoert zum alten Aufbau und muss weg,
+    // sonst blockiert sein Zustand das naechste Oeffnen.
+    this._editSchliessen();
+
     const c = this._config;
     const f = c.colors;
 
@@ -370,13 +374,13 @@ class ThermostatBarCard extends HTMLElement {
           background: ${f.mode_off}; border-color: ${f.mode_off}; color: #eef3f7;
         }
 
+        /* Ersetzt im Bearbeitungsmodus Anzeigeleiste und Modus-Knoepfe im
+           Fluss der Karte; die Karte waechst dabei mit. */
         .editbox {
-          position: absolute; left: 6px; right: 6px; top: 50%;
-          transform: translateY(-50%); z-index: 5;
           display: flex; flex-direction: column; gap: 12px;
-          background: var(--card-background-color, #0c0f12);
-          border: 1px solid var(--divider-color); border-radius: 14px;
-          padding: 12px; box-shadow: 0 14px 38px rgba(0, 0, 0, 0.6);
+          background: var(--secondary-background-color, rgba(0, 0, 0, 0.25));
+          border: 1px solid var(--divider-color); border-radius: 12px;
+          padding: 12px;
         }
         .editbox .zeile { display: flex; gap: 12px; }
         .editbox .zeile button {
@@ -730,8 +734,13 @@ class ThermostatBarCard extends HTMLElement {
     fertig.textContent = "Fertig";
     box.appendChild(fertig);
 
+    // Als Ueberlagerung waere der Bearbeitungsmodus hoeher als die Karte und
+    // wuerde ueber ihren Rand ragen. Deshalb ersetzt er die Anzeige im Fluss.
+    this._anzeigeLeiste.wrap.style.display = "none";
+    this._el.modes.style.display = "none";
     this._el.karte.appendChild(box);
     this._editBox = box;
+    if (this._beobachter) this._beobachter.observe(this._editLeiste.wrap);
 
     let zieht = false;
     const clip = this._editLeiste.clip;
@@ -780,9 +789,12 @@ class ThermostatBarCard extends HTMLElement {
   _editSchliessen() {
     if (!this._editBox) return;
     document.removeEventListener("pointerdown", this._aussenKlick, true);
+    if (this._beobachter && this._editLeiste) this._beobachter.unobserve(this._editLeiste.wrap);
     this._editBox.remove();
     this._editBox = null;
     this._editLeiste = null;
+    if (this._anzeigeLeiste) this._anzeigeLeiste.wrap.style.display = "";
+    if (this._el) this._el.modes.style.display = "";
   }
 
   _sollSenden(wert) {
