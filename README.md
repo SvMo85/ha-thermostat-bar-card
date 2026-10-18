@@ -110,9 +110,10 @@ Jeder Wert nimmt eine beliebige CSS-Farbangabe an, also auch Theme-Variablen wie
 | Schlüssel | Vorgabe | Wirkung |
 |---|---|---|
 | `track` | `var(--divider-color)` | Hintergrund der Leiste |
-| `current` | `#4a7f9e` | Füllung bis zur Ist-Temperatur |
-| `demand` | `#7d4226` | Fläche zwischen Ist und Soll beim Heizen |
+| `current` | `#2b8a9a` | Füllung bis zur Ist-Temperatur |
+| `demand` | Glut-Verlauf | Fläche zwischen Ist und Soll. Nimmt jeden CSS-Hintergrund, auch Verläufe |
 | `target` | `#e8a33d` | Strich und Greifpunkt |
+| `target_heating` | `#ff5a26` | Strich, Glühen und Schein, solange Soll über Ist liegt |
 | `label_current` | `#dde7ee` | Ist-Beschriftung |
 | `label_target` | `#e8a33d` | Soll-Beschriftung |
 | `status_heating` | `#e8663d` | Status, solange geheizt wird |

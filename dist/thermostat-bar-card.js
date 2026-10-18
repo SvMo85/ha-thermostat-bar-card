@@ -24,9 +24,10 @@ console.info(
 
 const STANDARDFARBEN = {
   track: "var(--divider-color, #262c32)",
-  current: "#4a7f9e",
-  demand: "#7d4226",
+  current: "#2b8a9a",
+  demand: "linear-gradient(90deg, #6a2d1a 0%, #94421f 40%, #c45826 78%, #e2702f 100%)",
   target: "#e8a33d",
+  target_heating: "#ff5a26",
   label_current: "#dde7ee",
   label_target: "#e8a33d",
   status_heating: "#e8663d",
@@ -253,7 +254,19 @@ class ThermostatBarCard extends HTMLElement {
         .status[data-zustand="heating"] { color: ${f.status_heating}; font-weight: 500; }
         .status[data-zustand="reached"] { color: ${f.status_reached}; font-weight: 500; }
 
-        .trackwrap { position: relative; }
+        .trackwrap { position: relative; transition: transform 120ms ease; }
+        .trackwrap.haelt { transform: scale(0.98); }
+
+        /* Waechst waehrend des Haltens von der Mitte nach aussen. */
+        .haltefortschritt {
+          position: absolute; top: 0; bottom: 0; left: 50%; width: 0;
+          transform: translateX(-50%);
+          background: rgba(255, 255, 255, 0.22);
+          border-left: 2px solid rgba(255, 255, 255, 0.55);
+          border-right: 2px solid rgba(255, 255, 255, 0.55);
+          opacity: 0; pointer-events: none;
+        }
+        .trackwrap.haelt .haltefortschritt { opacity: 1; }
         .trackwrap.anzeige {
           height: ${c.height}px; margin: 0 ${c.edge_space}px;
           touch-action: auto; cursor: pointer;
@@ -264,12 +277,34 @@ class ThermostatBarCard extends HTMLElement {
         }
         .trackclip {
           position: absolute; inset: 0; border-radius: 8px;
-          background: ${f.track}; overflow: hidden;
+          background: ${f.track}; overflow: hidden; z-index: 1;
+        }
+
+        /* Warmer Schein unter der Heizanforderung, ausserhalb des Beschnitts */
+        .waermeglow {
+          position: absolute; top: 3px; bottom: 3px; display: none; z-index: 0;
+          background: ${f.target_heating}; opacity: 0.5; filter: blur(12px);
+          border-radius: 8px; pointer-events: none;
         }
         .trackwrap:focus-visible .trackclip {
           outline: 2px solid ${f.target}; outline-offset: 2px;
         }
-        .demand { position: absolute; top: 0; bottom: 0; background: ${f.demand}; display: none; }
+        /* Glut-Verlauf von der Ist-Kante zum Sollwert. Beginnt exakt an der
+           Ist-Kante, damit die Ist-Fuellung nicht optisch verkuerzt wird. */
+        .demand {
+          position: absolute; top: 0; bottom: 0; display: none; overflow: hidden;
+          background: ${f.demand};
+        }
+        .demand::after {
+          content: ""; position: absolute; inset: 0;
+          background: linear-gradient(100deg, transparent 0%, rgba(255, 196, 128, 0.2) 45%, transparent 70%);
+          background-size: 220% 100%;
+          animation: waermeflimmern 3.2s ease-in-out infinite;
+        }
+        @keyframes waermeflimmern {
+          0% { background-position: 120% 0; }
+          100% { background-position: -120% 0; }
+        }
         .fill { position: absolute; inset: 0 auto 0 0; background: ${f.current}; }
         .markerline {
           position: absolute; top: 0; bottom: 0;
@@ -280,14 +315,46 @@ class ThermostatBarCard extends HTMLElement {
           width: 18px; height: 18px; margin: -9px 0 0 -9px;
           border-radius: 50%; background: ${f.target};
           box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.4); pointer-events: none;
+          z-index: 2;
         }
         .lbl {
           position: absolute; top: 50%; transform: translateY(-50%);
-          white-space: nowrap; pointer-events: none;
+          white-space: nowrap; pointer-events: none; z-index: 2;
           font-size: 1.2rem; font-variant-numeric: tabular-nums;
         }
         .lbl.ist { color: ${f.label_current}; }
         .lbl.soll { color: ${f.label_target}; font-weight: 600; }
+
+        /* Der Strich laeuft sichtbar durch die Mitte des Greifpunkts. */
+        .markerdot::after {
+          content: ""; position: absolute; left: 50%; top: 0; bottom: 0;
+          width: 3px; margin-left: -1.5px; background: ${f.target};
+        }
+        .trackwrap.heizt .markerdot::after { background: ${f.target_heating}; }
+
+        /* Beim Heizen: Strich und Greifpunkt gluehen, die Soll-Beschriftung zieht mit */
+        .trackwrap.heizt .markerline {
+          background: ${f.target_heating};
+          box-shadow: 0 0 6px 1px ${f.target_heating};
+        }
+        .trackwrap.heizt .markerdot {
+          background: radial-gradient(circle at 40% 35%, #ffd8a8 0%, #ff7a33 45%, #d63c18 100%);
+          animation: glutpuls 1.8s ease-in-out infinite;
+        }
+        .trackwrap.heizt .lbl.soll { color: #ff8a4a; }
+        @keyframes glutpuls {
+          0%, 100% { box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.4), 0 0 10px 2px rgba(255, 90, 38, 0.5); }
+          50%      { box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.4), 0 0 18px 6px rgba(255, 90, 38, 0.85); }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .demand::after { animation: none; }
+          .trackwrap.heizt .markerdot {
+            animation: none;
+            box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.4), 0 0 14px 4px rgba(255, 90, 38, 0.65);
+          }
+          .trackwrap { transition: none; }
+        }
         .einheit { font-size: 0.58em; vertical-align: super; margin-left: 2px; }
 
         .modes { display: flex; gap: 8px; }
@@ -376,10 +443,12 @@ class ThermostatBarCard extends HTMLElement {
     wrap.setAttribute("role", "slider");
     wrap.setAttribute("tabindex", "0");
     wrap.innerHTML = `
+      <div class="waermeglow"></div>
       <div class="trackclip">
-        <div class="demand"></div>
         <div class="fill"></div>
+        <div class="demand"></div>
         <div class="markerline"></div>
+        <div class="haltefortschritt"></div>
       </div>
       <div class="markerdot"></div>
       ${this._config.show_labels ? '<span class="lbl ist"></span><span class="lbl soll"></span>' : ""}
@@ -387,6 +456,8 @@ class ThermostatBarCard extends HTMLElement {
 
     const clip = wrap.querySelector(".trackclip");
     const demand = wrap.querySelector(".demand");
+    const glow = wrap.querySelector(".waermeglow");
+    const fortschritt = wrap.querySelector(".haltefortschritt");
     const fill = wrap.querySelector(".fill");
     const linie = wrap.querySelector(".markerline");
     const punkt = wrap.querySelector(".markerdot");
@@ -402,12 +473,19 @@ class ThermostatBarCard extends HTMLElement {
       linie.style.left = `${sollPx}px`;
       punkt.style.left = `${sollPx}px`;
 
-      if (bedarf && sollPx > istPx) {
+      const heizt = bedarf && sollPx > istPx;
+      wrap.classList.toggle("heizt", heizt);
+
+      if (heizt) {
         demand.style.display = "block";
         demand.style.left = `${istPx}px`;
         demand.style.width = `${sollPx - istPx}px`;
+        glow.style.display = "block";
+        glow.style.left = `${istPx}px`;
+        glow.style.width = `${sollPx - istPx}px`;
       } else {
         demand.style.display = "none";
+        glow.style.display = "none";
       }
 
       wrap.setAttribute("aria-valuemin", String(this._min));
@@ -442,7 +520,7 @@ class ThermostatBarCard extends HTMLElement {
       return this._rasten(this._min + quote * (this._max - this._min));
     };
 
-    return { wrap, clip, zeichnen, wertAus };
+    return { wrap, clip, fortschritt, zeichnen, wertAus };
   }
 
   _modiBauen() {
@@ -569,8 +647,10 @@ class ThermostatBarCard extends HTMLElement {
       this._startX = ereignis.clientX;
       this._startY = ereignis.clientY;
       this._haltenAbbrechen();
+      this._fortschrittStarten();
       this._haltenTimer = setTimeout(() => {
         this._haltenTimer = null;
+        this._fortschrittZuruecksetzen();
         this._editOeffnen();
       }, HALTEDAUER_MS);
     });
@@ -602,6 +682,27 @@ class ThermostatBarCard extends HTMLElement {
       clearTimeout(this._haltenTimer);
       this._haltenTimer = null;
     }
+    this._fortschrittZuruecksetzen();
+  }
+
+  /** Macht sichtbar, dass laenger gehalten werden muss. */
+  _fortschrittStarten() {
+    if (!this._anzeigeLeiste) return;
+    const balken = this._anzeigeLeiste.fortschritt;
+    balken.style.transition = "none";
+    balken.style.width = "0";
+    void balken.offsetWidth; // Neuberechnung erzwingen, sonst startet die Animation nicht
+    balken.style.transition = `width ${HALTEDAUER_MS}ms linear`;
+    balken.style.width = "100%";
+    this._anzeigeLeiste.wrap.classList.add("haelt");
+  }
+
+  _fortschrittZuruecksetzen() {
+    if (!this._anzeigeLeiste) return;
+    const balken = this._anzeigeLeiste.fortschritt;
+    balken.style.transition = "width 140ms ease";
+    balken.style.width = "0";
+    this._anzeigeLeiste.wrap.classList.remove("haelt");
   }
 
   // --------------------------------------------------------- Bearbeitungsmodus
