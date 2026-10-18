@@ -259,7 +259,10 @@ class ThermostatBarCard extends HTMLElement {
 
         .trackwrap {
           position: relative; margin: 0 var(--tb-edge);
-          height: var(--tb-height); touch-action: none;
+          height: var(--tb-height);
+          /* Senkrechtes Scrollen bleibt dem Browser ueberlassen, waagerechte
+             Gesten wertet die Karte selbst aus. */
+          touch-action: pan-y;
         }
         .trackclip {
           position: absolute; inset: 0; border-radius: 8px;
@@ -561,9 +564,12 @@ class ThermostatBarCard extends HTMLElement {
 
     clip.addEventListener("pointerdown", (ereignis) => {
       if (this._feinBox) return;
-      clip.setPointerCapture(ereignis.pointerId);
+      // Der Zeiger wird bewusst noch nicht eingefangen: Solange die Richtung
+      // der Geste unklar ist, muss der Browser senkrecht scrollen duerfen.
       this._startX = ereignis.clientX;
+      this._startY = ereignis.clientY;
       this._gezogen = false;
+      this._verworfen = false;
       this._haltenAbbrechen();
       this._haltenTimer = setTimeout(() => {
         this._haltenTimer = null;
@@ -573,22 +579,57 @@ class ThermostatBarCard extends HTMLElement {
     });
 
     clip.addEventListener("pointermove", (ereignis) => {
-      if (!clip.hasPointerCapture(ereignis.pointerId)) return;
-      if (Math.abs(ereignis.clientX - this._startX) <= BEWEGUNGSSCHWELLE_PX) return;
-      this._haltenAbbrechen();
-      this._gezogen = true;
+      if (this._verworfen || this._startX === null) return;
+
+      const dx = ereignis.clientX - this._startX;
+      const dy = ereignis.clientY - this._startY;
+
+      if (!this._gezogen) {
+        // Ueberwiegend senkrecht: Der Nutzer scrollt, die Karte haelt sich raus.
+        if (Math.abs(dy) > BEWEGUNGSSCHWELLE_PX && Math.abs(dy) > Math.abs(dx)) {
+          this._verworfen = true;
+          this._haltenAbbrechen();
+          return;
+        }
+        if (Math.abs(dx) <= BEWEGUNGSSCHWELLE_PX) return;
+
+        this._gezogen = true;
+        this._haltenAbbrechen();
+        clip.setPointerCapture(ereignis.pointerId);
+      }
+
       this._vorschauSoll = this._wertAusEreignis(ereignis);
       this._werteSchreiben();
     });
 
     clip.addEventListener("pointerup", (ereignis) => {
       this._haltenAbbrechen();
-      if (!this._gezogen) this._vorschauSoll = this._wertAusEreignis(ereignis);
+
+      const verworfen = this._verworfen;
+      const dx = Math.abs(ereignis.clientX - this._startX);
+      const dy = Math.abs(ereignis.clientY - this._startY);
+      const gezogen = this._gezogen;
+
+      this._startX = null;
+      this._verworfen = false;
+
+      if (verworfen) return;
+
+      if (!gezogen) {
+        // Tippen zaehlt nur, wenn der Finger in beiden Richtungen ruhig blieb.
+        if (dx <= BEWEGUNGSSCHWELLE_PX && dy <= BEWEGUNGSSCHWELLE_PX) {
+          this._sollSenden(this._wertAusEreignis(ereignis));
+        }
+        return;
+      }
+
       if (this._vorschauSoll !== null) this._sollSenden(this._vorschauSoll);
     });
 
     clip.addEventListener("pointercancel", () => {
       this._haltenAbbrechen();
+      this._startX = null;
+      this._verworfen = false;
       this._vorschauSoll = null;
       this._werteSchreiben();
     });
