@@ -92,7 +92,7 @@ class ThermostatBarCard extends HTMLElement {
       name: null,
       lock_entity: null,
       height: 56,
-      edge_space: 84,
+      edge_space: 92,
       tolerance: 0.2,
       show_labels: true,
       show_status: true,
@@ -115,10 +115,6 @@ class ThermostatBarCard extends HTMLElement {
 
   getCardSize() {
     return this._config && this._config.show_status ? 3 : 2;
-  }
-
-  getLayoutOptions() {
-    return { grid_columns: "full", grid_rows: 2, grid_min_rows: 2 };
   }
 
   // ---------------------------------------------------------------- Zustand
@@ -212,15 +208,21 @@ class ThermostatBarCard extends HTMLElement {
 
     this.shadowRoot.innerHTML = `
       <style>
-        :host { --tb-height: ${c.height}px; --tb-edge: ${c.edge_space}px; }
+        :host {
+          display: block;
+          --tb-height: ${c.height}px;
+          --tb-edge: ${c.edge_space}px;
+        }
         ha-card {
           display: flex; flex-direction: column; gap: 14px;
           padding: 14px 16px; position: relative;
+          box-sizing: border-box; width: 100%; overflow: hidden;
         }
+        *, *::before, *::after { box-sizing: border-box; }
         .head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
         .head-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
         .name {
-          font-weight: 600; overflow: hidden;
+          font-size: 1.05rem; font-weight: 600; overflow: hidden;
           text-overflow: ellipsis; white-space: nowrap;
         }
         .lock {
@@ -234,11 +236,11 @@ class ThermostatBarCard extends HTMLElement {
         .lock ha-icon { --mdc-icon-size: 18px; }
 
         .status {
-          display: inline-flex; align-items: center; gap: 5px;
-          font-size: 0.78rem; white-space: nowrap;
+          display: inline-flex; align-items: center; gap: 6px;
+          font-size: 0.92rem; white-space: nowrap;
           color: ${f.status_idle};
         }
-        .status ha-icon { --mdc-icon-size: 15px; }
+        .status ha-icon { --mdc-icon-size: 18px; }
         .status[data-zustand="heating"] { color: ${f.status_heating}; font-weight: 500; }
         .status[data-zustand="reached"] { color: ${f.status_reached}; font-weight: 500; }
 
@@ -268,7 +270,7 @@ class ThermostatBarCard extends HTMLElement {
         .lbl {
           position: absolute; top: 50%; transform: translateY(-50%);
           white-space: nowrap; pointer-events: none;
-          font-size: 0.82rem; font-variant-numeric: tabular-nums;
+          font-size: 0.98rem; font-variant-numeric: tabular-nums;
         }
         .lbl.ist { color: ${f.label_current}; }
         .lbl.soll { color: ${f.label_target}; font-weight: 600; }
@@ -279,9 +281,9 @@ class ThermostatBarCard extends HTMLElement {
           display: inline-flex; align-items: center; justify-content: center; gap: 7px;
           border: 1px solid ${f.mode_inactive}; border-radius: 8px;
           background: transparent; color: var(--primary-text-color);
-          font: inherit; font-size: 0.88rem; cursor: pointer;
+          font: inherit; font-size: 1rem; cursor: pointer;
         }
-        .modes button ha-icon { --mdc-icon-size: 18px; }
+        .modes button ha-icon { --mdc-icon-size: 21px; }
         .modes button[aria-pressed="true"] { font-weight: 600; color: #16181a; }
         .modes button[aria-pressed="true"][data-mode="auto"] { background: ${f.mode_auto}; border-color: ${f.mode_auto}; }
         .modes button[aria-pressed="true"][data-mode="heat"],
