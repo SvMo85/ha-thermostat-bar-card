@@ -26,8 +26,9 @@ const STANDARDFARBEN = {
   track: "var(--divider-color, #262c32)",
   current: "#2b8a9a",
   demand: "linear-gradient(90deg, #6a2d1a 0%, #94421f 40%, #c45826 78%, #e2702f 100%)",
+  demand_glow: "#e8663d",
   target: "#e8a33d",
-  target_heating: "#ff5a26",
+  target_heating: "#c23a1a",
   label_current: "#dde7ee",
   label_target: "#e8a33d",
   status_heating: "#e8663d",
@@ -283,7 +284,7 @@ class ThermostatBarCard extends HTMLElement {
         /* Warmer Schein unter der Heizanforderung, ausserhalb des Beschnitts */
         .waermeglow {
           position: absolute; top: 3px; bottom: 3px; display: none; z-index: 0;
-          background: ${f.target_heating}; opacity: 0.5; filter: blur(12px);
+          background: ${f.demand_glow}; opacity: 0.5; filter: blur(12px);
           border-radius: 8px; pointer-events: none;
         }
         .trackwrap:focus-visible .trackclip {
@@ -325,14 +326,8 @@ class ThermostatBarCard extends HTMLElement {
         .lbl.ist { color: ${f.label_current}; }
         .lbl.soll { color: ${f.label_target}; font-weight: 600; }
 
-        /* Der Strich laeuft sichtbar durch die Mitte des Greifpunkts. */
-        .markerdot::after {
-          content: ""; position: absolute; left: 50%; top: 0; bottom: 0;
-          width: 3px; margin-left: -1.5px; background: ${f.target};
-        }
-        .trackwrap.heizt .markerdot::after { background: ${f.target_heating}; }
-
-        /* Beim Heizen: Strich und Greifpunkt gluehen, die Soll-Beschriftung zieht mit */
+        /* Beim Heizen: Strich dunkelrot hinter der Kugel, die Kugel glueht,
+           die Soll-Beschriftung zieht mit. */
         .trackwrap.heizt .markerline {
           background: ${f.target_heating};
           box-shadow: 0 0 6px 1px ${f.target_heating};
@@ -464,7 +459,11 @@ class ThermostatBarCard extends HTMLElement {
     const istLbl = wrap.querySelector(".lbl.ist");
     const sollLbl = wrap.querySelector(".lbl.soll");
 
-    const zeichnen = (ist, soll, bedarf) => {
+    /**
+     * bedarf:      Soll liegt ueber Ist. Steuert Flaeche und Schein.
+     * geraetHeizt: Das Geraet meldet, dass es heizt. Steuert Kugel und Strich.
+     */
+    const zeichnen = (ist, soll, bedarf, geraetHeizt) => {
       const breite = clip.offsetWidth;
       const istPx = ist === null ? 0 : this._anteil(ist) * breite;
       const sollPx = soll === null ? 0 : this._anteil(soll) * breite;
@@ -473,10 +472,9 @@ class ThermostatBarCard extends HTMLElement {
       linie.style.left = `${sollPx}px`;
       punkt.style.left = `${sollPx}px`;
 
-      const heizt = bedarf && sollPx > istPx;
-      wrap.classList.toggle("heizt", heizt);
+      wrap.classList.toggle("heizt", geraetHeizt);
 
-      if (heizt) {
+      if (bedarf && sollPx > istPx) {
         demand.style.display = "block";
         demand.style.left = `${istPx}px`;
         demand.style.width = `${sollPx - istPx}px`;
@@ -569,17 +567,20 @@ class ThermostatBarCard extends HTMLElement {
     const bedarf = ist !== null && soll !== null && soll > ist + c.tolerance;
     const erreicht = ist !== null && soll !== null && Math.abs(soll - ist) <= c.tolerance;
 
-    this._anzeigeLeiste.zeichnen(ist, soll, bedarf);
-    if (this._editLeiste) this._editLeiste.zeichnen(ist, soll, bedarf);
+    // Kugel, Strich und Status folgen dem Geraet. Meldet es kein hvac_action,
+    // dient die Differenz als Ersatz.
+    const aktion = z.attributes.hvac_action;
+    const geraetHeizt = aktion !== undefined ? aktion === "heating" : bedarf;
+
+    this._anzeigeLeiste.zeichnen(ist, soll, bedarf, geraetHeizt);
+    if (this._editLeiste) this._editLeiste.zeichnen(ist, soll, bedarf, geraetHeizt);
 
     if (el.status) {
-      const aktion = z.attributes.hvac_action;
-      const heizt = aktion !== undefined ? aktion === "heating" : bedarf;
-      const art = heizt ? "heating" : erreicht ? "reached" : "idle";
+      const art = geraetHeizt ? "heating" : erreicht ? "reached" : "idle";
       el.status.setAttribute("data-zustand", art);
       el.status.querySelector("ha-icon").setAttribute(
         "icon",
-        heizt ? "mdi:fire" : erreicht ? "mdi:check-circle-outline" : "mdi:thermometer"
+        geraetHeizt ? "mdi:fire" : erreicht ? "mdi:check-circle-outline" : "mdi:thermometer"
       );
       el.status.querySelector(".stext").textContent = this._statustext(art);
     }

@@ -113,7 +113,8 @@ Jeder Wert nimmt eine beliebige CSS-Farbangabe an, also auch Theme-Variablen wie
 | `current` | `#2b8a9a` | Füllung bis zur Ist-Temperatur |
 | `demand` | Glut-Verlauf | Fläche zwischen Ist und Soll. Nimmt jeden CSS-Hintergrund, auch Verläufe |
 | `target` | `#e8a33d` | Strich und Greifpunkt |
-| `target_heating` | `#ff5a26` | Strich, Glühen und Schein, solange Soll über Ist liegt |
+| `demand_glow` | `#e8663d` | Warmer Schein unter der Heizanforderung |
+| `target_heating` | `#c23a1a` | Strich hinter der Kugel, solange das Gerät heizt |
 | `label_current` | `#dde7ee` | Ist-Beschriftung |
 | `label_target` | `#e8a33d` | Soll-Beschriftung |
 | `status_heating` | `#e8663d` | Status, solange geheizt wird |
@@ -124,6 +125,15 @@ Jeder Wert nimmt eine beliebige CSS-Farbangabe an, also auch Theme-Variablen wie
 | `mode_off` | `#3d5f7a` | Knopf Aus, ausgewählt |
 | `mode_inactive` | `var(--divider-color)` | Rahmen der nicht ausgewählten Knöpfe |
 | `lock_active` | `#c06a6a` | Schloss, wenn die Bedienung gesperrt ist |
+
+## Was die Farben bedeuten
+
+Die Karte trennt zwei Aussagen, die bei Thermostaten oft auseinanderlaufen:
+
+- **Die Glutfläche** zwischen Ist und Soll zeigt, wie viel Wärme noch fehlt. Sie folgt allein der Differenz und bleibt auch sichtbar, wenn die Heizung gerade aus ist.
+- **Die glühende Kugel** samt rotem Strich und der Status oben rechts zeigen, ob das Gerät gerade heizt. Sie folgen `hvac_action` der Entität. Meldet ein Gerät diesen Wert nicht, dient die Differenz als Ersatz.
+
+Beides kann auseinanderlaufen: Nach einer Absenkung fährt ein Ventil allmählich zu und meldet so lange weiter "heizt", obwohl der Sollwert bereits unter der Ist-Temperatur liegt. Dann glüht die Kugel, aber es erscheint keine Fläche.
 
 ## Hinweis zu Homematic IP
 
