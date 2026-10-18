@@ -43,7 +43,7 @@ entity: climate.thermostat_kinderzimmer
 name: Kinderzimmer
 lock_entity: switch.thermostat_kinderzimmer_button_lock
 height: 56
-edge_space: 84
+edge_space: 60
 tolerance: 0.2
 show_labels: true
 show_status: true
@@ -69,7 +69,7 @@ colors:
 | `name` | Name der Entität | Überschrift der Karte |
 | `lock_entity` | — | Entität der Bedienungssperre. Fehlt sie, erscheint kein Schloss |
 | `height` | `56` | Höhe der Leiste in Pixel |
-| `edge_space` | `84` | Freier Rand links und rechts, in den die Beschriftungen auswandern dürfen |
+| `edge_space` | `60` | Freier Rand links und rechts, in den die Beschriftungen auswandern dürfen |
 | `tolerance` | `0.2` | Ab welcher Abweichung in Kelvin der Status auf "Erreicht" wechselt |
 | `show_labels` | `true` | Ist- und Soll-Werte in der Leiste |
 | `show_status` | `true` | Statusanzeige oben rechts |

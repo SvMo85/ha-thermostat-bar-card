@@ -92,7 +92,7 @@ class ThermostatBarCard extends HTMLElement {
       name: null,
       lock_entity: null,
       height: 56,
-      edge_space: 76,
+      edge_space: 60,
       tolerance: 0.2,
       show_labels: true,
       show_status: true,
