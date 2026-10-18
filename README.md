@@ -6,9 +6,12 @@ Entstanden, weil die eingebaute Thermostat-Karte ihren Rundregler zugleich als B
 
 ## Bedienung
 
-- **Tippen** setzt die Solltemperatur an der getippten Stelle
-- **Ziehen** verschiebt sie grob, gerastet auf die Schrittweite des Geräts
-- **Halten** für eine halbe Sekunde öffnet ein Feld mit großen Plus- und Minus-Flächen für die feine Einstellung
+Die Leiste in der Karte ist **reine Anzeige**. Sie fängt keine Wischgeste ab, deshalb lässt sich über einem Dashboard voller solcher Karten ungestört scrollen, ohne versehentlich eine Temperatur zu verstellen.
+
+- **600 ms halten** öffnet den Bearbeitungsmodus. Bewegt sich der Finger vorher um mehr als sechs Pixel, bricht die Geste ab.
+- Im Bearbeitungsmodus erscheint dieselbe Leiste noch einmal, dort **ziehbar**, darunter große **Plus- und Minus-Flächen** und ein **Fertig**-Knopf.
+- Schließen durch Tippen daneben oder über **Fertig**.
+- Über Tastatur: Leiste fokussieren, dann Eingabe oder Leertaste.
 
 ## Installation
 
@@ -41,8 +44,10 @@ Mit allen gebräuchlichen Optionen:
 type: custom:thermostat-bar-card
 entity: climate.thermostat_kinderzimmer
 name: Kinderzimmer
-lock_entity: switch.thermostat_kinderzimmer_button_lock
-height: 56
+icon: mdi:radiator
+lock_entity: lock.thermostat_kinderzimmer_button_lock
+height: 44
+edit_height: 56
 edge_space: 60
 tolerance: 0.2
 show_labels: true
@@ -67,8 +72,10 @@ colors:
 |---|---|---|
 | `entity` | — | Klima-Entität, Pflichtfeld |
 | `name` | Name der Entität | Überschrift der Karte |
+| `icon` | `mdi:radiator` | Symbol vor dem Namen. Leer lassen, um es wegzulassen |
 | `lock_entity` | — | Entität der Bedienungssperre. Fehlt sie, erscheint kein Schloss |
-| `height` | `56` | Höhe der Leiste in Pixel |
+| `height` | `44` | Höhe der Anzeigeleiste in Pixel, entspricht der Knopfhöhe |
+| `edit_height` | `56` | Höhe der Leiste im Bearbeitungsmodus |
 | `edge_space` | `60` | Freier Rand links und rechts, in den die Beschriftungen auswandern dürfen |
 | `tolerance` | `0.2` | Ab welcher Abweichung in Kelvin der Status auf "Erreicht" wechselt |
 | `show_labels` | `true` | Ist- und Soll-Werte in der Leiste |
@@ -109,9 +116,9 @@ Jeder Wert nimmt eine beliebige CSS-Farbangabe an, also auch Theme-Variablen wie
 | `label_current` | `#dde7ee` | Ist-Beschriftung |
 | `label_target` | `#e8a33d` | Soll-Beschriftung |
 | `status_heating` | `#e8663d` | Status, solange geheizt wird |
-| `status_reached` | `#5aa469` | Status, wenn die Solltemperatur erreicht ist |
+| `status_reached` | `#4caf50` | Status, wenn die Solltemperatur erreicht ist |
 | `status_idle` | `var(--secondary-text-color)` | Status sonst |
-| `mode_auto` | `#5aa469` | Knopf Auto, ausgewählt |
+| `mode_auto` | `#4caf50` | Knopf Auto, ausgewählt |
 | `mode_heat` | `#e8663d` | Knopf Heizen, ausgewählt |
 | `mode_off` | `#3d5f7a` | Knopf Aus, ausgewählt |
 | `mode_inactive` | `var(--divider-color)` | Rahmen der nicht ausgewählten Knöpfe |
