@@ -439,12 +439,17 @@ class ThermostatBarCard extends HTMLElement {
     el.punkt.style.left = `${sollPx}px`;
 
     const aktion = z.attributes.hvac_action;
-    const heizt =
-      aktion === "heating" ||
-      (aktion === undefined && ist !== null && soll !== null && soll > ist + c.tolerance);
     const erreicht = ist !== null && soll !== null && Math.abs(soll - ist) <= c.tolerance;
 
-    if (heizt && soll !== null && ist !== null && sollPx > istPx) {
+    // Die Flaeche zeigt den Abstand zwischen Ist und Soll, nicht den laufenden
+    // Betrieb. hvac_action meldet bei abgeschalteter Heizung "idle", obwohl
+    // das Ventil geoeffnet waere, sobald Waerme verfuegbar ist.
+    const bedarf = ist !== null && soll !== null && soll > ist + c.tolerance;
+
+    // Der Status folgt dagegen dem gemeldeten Betrieb, soweit vorhanden.
+    const heizt = aktion !== undefined ? aktion === "heating" : bedarf;
+
+    if (bedarf && sollPx > istPx) {
       el.demand.style.display = "block";
       el.demand.style.left = `${istPx}px`;
       el.demand.style.width = `${sollPx - istPx}px`;
