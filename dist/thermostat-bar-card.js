@@ -394,6 +394,48 @@ class ThermostatBarCard extends HTMLElement {
           background: ${f.target}; color: #16181a;
           font: inherit; font-size: 1rem; font-weight: 600; cursor: pointer;
         }
+
+        /* Rueckmeldung fuer alles Bedienbare. */
+        .lock, .modes button, .editbox button, .trackclip {
+          transition: background-color 120ms ease, border-color 120ms ease,
+                      filter 120ms ease, transform 80ms ease, box-shadow 120ms ease;
+        }
+
+        /* Hover nur bei echtem Zeiger. Auf Touchgeraeten bliebe der Effekt
+           nach dem Antippen haengen. */
+        @media (hover: hover) {
+          .lock:hover {
+            background: rgba(255, 255, 255, 0.08);
+            color: var(--primary-text-color);
+          }
+          .lock[aria-pressed="true"]:hover { color: ${f.lock_active}; }
+          .modes button:hover {
+            background: rgba(255, 255, 255, 0.07);
+            border-color: var(--secondary-text-color);
+          }
+          .modes button[aria-pressed="true"]:hover { filter: brightness(1.1); }
+          .trackwrap:hover .trackclip {
+            filter: brightness(1.12);
+            box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18);
+          }
+          .editbox .zeile button:hover {
+            background: rgba(255, 255, 255, 0.08);
+            border-color: var(--secondary-text-color);
+          }
+          .editbox .fertig:hover { filter: brightness(1.1); }
+        }
+
+        /* Druckrueckmeldung wirkt auch auf Touchgeraeten. */
+        .lock:active, .modes button:active, .editbox button:active { transform: scale(0.97); }
+
+        .lock:focus-visible, .modes button:focus-visible, .editbox button:focus-visible {
+          outline: 2px solid ${f.target}; outline-offset: 2px;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .lock, .modes button, .editbox button, .trackclip { transition: none; }
+          .lock:active, .modes button:active, .editbox button:active { transform: none; }
+        }
       </style>
 
       <ha-card>
