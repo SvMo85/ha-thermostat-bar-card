@@ -9,12 +9,17 @@
  * oeffnet den Bearbeitungsmodus, der dieselbe Leiste noch einmal zeigt,
  * dort ziehbar und mit grossen Plus- und Minus-Flaechen.
  *
+ * Ueber der Leiste zeigt die Karte auf Wunsch den Tagesplan des Heizprofils
+ * als Kurve, dazu Abweichungen vom Plan und den gemessenen Verlauf bis jetzt.
+ * Der Plan stammt aus dem Attribut schedule_data, das Homematic(IP) Local an
+ * jeder Klima-Entitaet bereitstellt.
+ *
  * Der Betriebsmodus wird beim Verstellen bewusst nicht geaendert. Homematic IP
  * behaelt einen im Automatikbetrieb gesetzten Wert bis zum naechsten
  * Schaltzeitpunkt des Heizprofils bei; das ist gewolltes Verhalten.
  */
 
-const CARD_VERSION = "0.2.0";
+const CARD_VERSION = "0.3.0";
 
 console.info(
   `%c THERMOSTAT-BAR-CARD %c ${CARD_VERSION} `,
@@ -22,23 +27,53 @@ console.info(
   "color: #e8a33d; background: #16181a;"
 );
 
+// Ein Blau fuer Ist und Automatik, ein Rot fuer alles, was heizt. Beide sind
+// Theme-Farben von Home Assistant und folgen damit dem eingestellten Theme.
+const IST_FARBE = "var(--primary-color, #009ac7)";
+const WAERME_FARBE = "var(--red-color, #f44336)";
+
 const STANDARDFARBEN = {
   track: "var(--divider-color, #262c32)",
-  current: "#2b8a9a",
-  demand: "linear-gradient(90deg, #6a2d1a 0%, #94421f 40%, #c45826 78%, #e2702f 100%)",
-  demand_glow: "#e8663d",
+  current: IST_FARBE,
+  demand: null, // wird aus current und demand_glow abgeleitet, siehe heizflaecheVerlauf
+  demand_glow: WAERME_FARBE,
   target: "#e8a33d",
-  target_heating: "#c23a1a",
+  target_heating: null, // wird aus demand_glow abgeleitet
   label_current: "#dde7ee",
   label_target: "#e8a33d",
-  status_heating: "#e8663d",
-  status_reached: "#4caf50",
+  status_heating: WAERME_FARBE,
+  status_reached: IST_FARBE,
   status_idle: "var(--secondary-text-color, #8d97a1)",
-  mode_auto: "#4caf50",
-  mode_heat: "#e8663d",
+  mode_auto: IST_FARBE,
+  mode_heat: WAERME_FARBE,
   mode_off: "#3d5f7a",
   mode_inactive: "var(--divider-color, #2a3036)",
   lock_active: "#c06a6a"
+};
+
+const TAGESPLAN_VORGABEN = {
+  show: false,
+  min_temp: 16,
+  max_temp: 24,
+  min_color: "primary",
+  max_color: "red",
+  show_history: true,
+  history_color: "secondary-text"
+};
+
+const KARTEN_VORGABEN = {
+  name: null,
+  icon: "mdi:radiator",
+  lock_entity: null,
+  height: 44,
+  edit_height: 56,
+  edge_space: 60,
+  tolerance: 0.2,
+  show_labels: true,
+  show_status: true,
+  show_icons: true,
+  show_mode_labels: true,
+  hvac_modes: null
 };
 
 const MODUS_SYMBOLE = {
@@ -56,6 +91,101 @@ const BEWEGUNGSSCHWELLE_PX = 6;
 const BESCHRIFTUNGSLUECKE_PX = 10;
 const GREIFPUNKT_RADIUS_PX = 9;
 const RAND_BEARBEITEN_PX = 52;
+
+// Ueber diese Breite laeuft das Blau der Ist-Fuellung ins Rot der
+// Heizflaeche: genug gegen die harte Farbkante, wenig genug, damit die
+// Grenze zwischen Ist und Soll klar bleibt.
+const KANTENUEBERGANG_PX = 4;
+
+const TAGESMINUTEN = 1440;
+const ZEITMARKEN_MIN = [240, 480, 720, 960, 1200];
+const RAMPE_MIN = 40;
+const SKALA_LUFT_GRAD = 0.5;
+const KURVE_LINIE_PX = 2.5;
+const KURVE_FLAECHE_DECKKRAFT = 0.3;
+const VERLAUF_LINIE_PX = 1.5;
+const VERLAUF_FARBSTAERKE_PROZENT = 60;
+const VERLAUF_ABRUF_MS = 5 * 60 * 1000;
+const UHR_TAKT_MS = 60 * 1000;
+const ABWEICHUNG_SCHWELLE_GRAD = 0.05;
+
+/**
+ * Theme-Farbnamen wie "primary" oder "secondary-text" werden wie in Home
+ * Assistant zu var(--primary-color). Alles andere bleibt, wie es ist.
+ * Der Rueckfall auf den Namen selbst haelt CSS-Farbnamen wie "red" gueltig.
+ */
+function cssFarbe(wert) {
+  if (typeof wert !== "string") return wert;
+  if (/^[a-z]+(-[a-z]+)*$/.test(wert)) return `var(--${wert}-color, ${wert})`;
+  return wert;
+}
+
+const dunkler = (farbe, anteil) => `color-mix(in oklab, ${farbe} ${anteil}%, #000)`;
+
+/** Gluehverlauf von der Ist-Kante zum Sollwert, dunkel beginnend. */
+function heizflaecheVerlauf(istFarbe, waermeFarbe) {
+  return (
+    `linear-gradient(90deg in oklab, ${istFarbe} 0px, ${dunkler(waermeFarbe, 45)} ${KANTENUEBERGANG_PX}px, ` +
+    `${dunkler(waermeFarbe, 62)} 40%, ${dunkler(waermeFarbe, 85)} 78%, ${waermeFarbe} 100%)`
+  );
+}
+
+/** "06:45" -> 405, "24:00" -> 1440 */
+function uhrzeitInMinuten(text) {
+  const teile = /^(\d{1,2}):(\d{2})$/.exec(String(text));
+  if (!teile) return null;
+  return Number(teile[1]) * 60 + Number(teile[2]);
+}
+
+function wertUm(abschnitte, minute) {
+  const abschnitt = abschnitte.find((a) => minute >= a.von && minute < a.bis);
+  return abschnitt ? abschnitt.temp : null;
+}
+
+function naechsterSchaltpunkt(abschnitte, minute) {
+  const abschnitt = abschnitte.find((a) => a.von > minute);
+  return abschnitt ? abschnitt.von : TAGESMINUTEN;
+}
+
+/**
+ * Ein Wochentag aus schedule_data als lueckenlose Abschnitte von 0 bis 1440
+ * Minuten. Die Grundtemperatur gilt ueberall, wo keine Periode liegt.
+ */
+function tagesabschnitte(tagesplan) {
+  if (!tagesplan) return [];
+  const basis = Number(tagesplan.base_temperature);
+  const perioden = (tagesplan.periods || [])
+    .map((p) => ({
+      von: uhrzeitInMinuten(p.starttime),
+      bis: uhrzeitInMinuten(p.endtime),
+      temp: Number(p.temperature)
+    }))
+    .filter((p) => p.von !== null && p.bis !== null && p.bis > p.von && Number.isFinite(p.temp))
+    .sort((a, b) => a.von - b.von);
+
+  const abschnitte = [];
+  let position = 0;
+  perioden.forEach((p) => {
+    if (p.von > position && Number.isFinite(basis)) {
+      abschnitte.push({ von: position, bis: p.von, temp: basis });
+    }
+    const von = Math.max(p.von, position);
+    if (p.bis > von) abschnitte.push({ von, bis: p.bis, temp: p.temp });
+    position = Math.max(position, p.bis);
+  });
+  if (position < TAGESMINUTEN && Number.isFinite(basis)) {
+    abschnitte.push({ von: position, bis: TAGESMINUTEN, temp: basis });
+  }
+  return abschnitte;
+}
+
+/** Alle Temperaturen der Woche, fuer eine Hoehenskala, die nicht taeglich springt. */
+function wochentemperaturen(planDaten) {
+  return Object.values(planDaten || {}).flatMap((tag) => [
+    Number(tag.base_temperature),
+    ...(tag.periods || []).map((p) => Number(p.temperature))
+  ]).filter(Number.isFinite);
+}
 
 class ThermostatBarCard extends HTMLElement {
   static getConfigElement() {
@@ -77,33 +207,33 @@ class ThermostatBarCard extends HTMLElement {
     this._editLeiste = null;
     this._vorschauSoll = null;
     this._aufgebaut = false;
+    this._verlauf = [];
+    this._verlaufGeladenAm = 0;
+    this._verlaufLaedt = false;
   }
 
   setConfig(config) {
     if (!config || !config.entity) {
-      throw new Error("Es muss eine Klima-Entitaet angegeben werden.");
+      throw new Error("Es muss eine Klima-Entität angegeben werden.");
     }
     if (!config.entity.startsWith("climate.")) {
-      throw new Error("entity muss aus der Domaene climate stammen.");
+      throw new Error("entity muss aus der Domäne climate stammen.");
     }
 
+    const farben = { ...STANDARDFARBEN, ...(config.colors || {}) };
+    if (!farben.demand) farben.demand = heizflaecheVerlauf(farben.current, farben.demand_glow);
+    if (!farben.target_heating) farben.target_heating = dunkler(farben.demand_glow, 80);
+
     this._config = {
-      name: null,
-      icon: "mdi:radiator",
-      lock_entity: null,
-      height: 44,
-      edit_height: 56,
-      edge_space: 60,
-      tolerance: 0.2,
-      show_labels: true,
-      show_status: true,
-      show_icons: true,
-      show_mode_labels: true,
-      hvac_modes: null,
+      ...KARTEN_VORGABEN,
       ...config,
-      colors: { ...STANDARDFARBEN, ...(config.colors || {}) }
+      colors: farben,
+      schedule: { ...TAGESPLAN_VORGABEN, ...(config.schedule || {}) }
     };
 
+    if (this._config.entity !== (this._verlaufEntitaet || this._config.entity)) this._verlauf = [];
+    this._verlaufEntitaet = this._config.entity;
+    this._verlaufGeladenAm = 0;
     this._aufgebaut = false;
     if (this._hass) this._zeichnen();
   }
@@ -112,10 +242,20 @@ class ThermostatBarCard extends HTMLElement {
     this._hass = hass;
     if (!this._config) return;
     this._zeichnen();
+    this._verlaufBeiBedarfLaden();
   }
 
   getCardSize() {
-    return 3;
+    return this._tagesplanSichtbar ? 4 : 3;
+  }
+
+  connectedCallback() {
+    // Der Zeitstrich wandert, auch wenn sich am Geraet nichts aendert.
+    clearInterval(this._uhr);
+    this._uhr = setInterval(() => {
+      if (this._hass && this._el) this._planZeichnen();
+      this._verlaufBeiBedarfLaden();
+    }, UHR_TAKT_MS);
   }
 
   // ---------------------------------------------------------------- Zustand
@@ -158,6 +298,14 @@ class ThermostatBarCard extends HTMLElement {
     return (this._zustand.attributes.hvac_modes || []).map((mode) => ({ mode }));
   }
 
+  get _planDaten() {
+    return this._zustand.attributes.schedule_data || null;
+  }
+
+  get _tagesplanSichtbar() {
+    return Boolean(this._config && this._config.schedule.show && this._hass && this._zustand && this._planDaten);
+  }
+
   _modusBeschriftung(eintrag) {
     if (eintrag.label !== undefined) return eintrag.label;
     const uebersetzt = this._hass.localize(
@@ -198,12 +346,32 @@ class ThermostatBarCard extends HTMLElement {
     return `${this._zahlteil(wert)}<span class="einheit">${this._einheit()}</span>`;
   }
 
+  /**
+   * Wochentag und Minute in der Zeitzone von Home Assistant. Das Heizprofil
+   * laeuft auf dem Geraet nach der Uhr der Zentrale, nicht nach der des Browsers.
+   */
+  _jetzt() {
+    const zeitzone = this._hass.config && this._hass.config.time_zone;
+    const optionen = { weekday: "long", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" };
+    let teile;
+    try {
+      teile = new Intl.DateTimeFormat("en-US", { ...optionen, timeZone: zeitzone }).formatToParts(new Date());
+    } catch (fehler) {
+      teile = new Intl.DateTimeFormat("en-US", optionen).formatToParts(new Date());
+    }
+    const teil = (typ) => (teile.find((t) => t.type === typ) || {}).value;
+    return {
+      tag: String(teil("weekday")).toUpperCase(),
+      minute: Number(teil("hour")) * 60 + Number(teil("minute")) + Number(teil("second")) / 60
+    };
+  }
+
   // ----------------------------------------------------------------- Aufbau
 
   _zeichnen() {
     if (!this._zustand) {
       this.shadowRoot.innerHTML =
-        `<ha-card><div style="padding:16px">Entitaet ${this._config.entity} nicht gefunden.</div></ha-card>`;
+        `<ha-card><div style="padding:16px">Entität ${this._config.entity} nicht gefunden.</div></ha-card>`;
       this._aufgebaut = false;
       return;
     }
@@ -259,6 +427,31 @@ class ThermostatBarCard extends HTMLElement {
         .status[data-zustand="heating"] { color: ${f.status_heating}; font-weight: 500; }
         .status[data-zustand="reached"] { color: ${f.status_reached}; font-weight: 500; }
 
+        /* Tagesplan, Leiste und Knoepfe stehen in einem Behaelter mit
+           einheitlichem Abstand, damit sie als ein Bedienelement wirken. */
+        .instrument { display: flex; flex-direction: column; gap: 6px; }
+
+        /* Volle Kartenbreite wie die Knoepfe: der Randbereich der Leiste
+           existiert nur fuer deren Beschriftungen. */
+        .tagesplan { position: relative; height: ${c.height}px; }
+        .tp-clip {
+          position: absolute; inset: 0; border-radius: 8px; overflow: hidden;
+          background: ${f.track};
+        }
+        .tp-marke { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--divider-color); }
+        /* Liegt im gerundeten Beschnitt, damit Flaeche und Linie den Ecken folgen. */
+        .tp-kurve { position: absolute; inset: 0; width: 100%; height: 100%; }
+        .tp-kurve text {
+          font: 600 11px var(--ha-font-family-body, Roboto, sans-serif);
+          font-variant-numeric: tabular-nums;
+          paint-order: stroke; stroke: var(--card-background-color, #1c1c1c); stroke-width: 3px;
+        }
+        .tp-jetzt {
+          position: absolute; top: -4px; bottom: -4px; width: 2px; margin-left: -1px;
+          background: var(--primary-text-color); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55);
+          border-radius: 1px; pointer-events: none;
+        }
+
         .trackwrap { position: relative; transition: transform 120ms ease; }
         .trackwrap.haelt { transform: scale(0.98); }
 
@@ -311,14 +504,20 @@ class ThermostatBarCard extends HTMLElement {
           100% { background-position: -120% 0; }
         }
         .fill { position: absolute; inset: 0 auto 0 0; background: ${f.current}; }
+
+        /* Der Soll-Strich steht wie der Zeitstrich ueber die Leiste hinaus und
+           liegt deshalb ausserhalb des Beschnitts. Strich und Kugel haben eine
+           gerade Breite und stehen auf ganzen Pixeln; sonst rundet der Browser
+           ihre Kanten verschieden und der Strich sitzt neben der Kugelmitte. */
         .markerline {
-          position: absolute; top: 0; bottom: 0;
-          width: 3px; margin-left: -1.5px; background: ${f.target};
+          position: absolute; top: -4px; bottom: -4px; z-index: 2;
+          width: 4px; margin-left: -2px; border-radius: 2px; background: ${f.target};
         }
         .markerdot {
           position: absolute; top: 50%;
           width: 18px; height: 18px; margin: -9px 0 0 -9px;
-          border-radius: 50%; background: ${f.target};
+          border-radius: 50%;
+          background: radial-gradient(circle at 40% 35%, #f2c27a 0%, ${f.target} 40%, #a86a1a 100%);
           box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.4); pointer-events: none;
           z-index: 2;
         }
@@ -356,22 +555,27 @@ class ThermostatBarCard extends HTMLElement {
         }
         .einheit { font-size: 0.58em; vertical-align: super; margin-left: 2px; }
 
-        .modes { display: flex; gap: 8px; }
+        /* Segmentleiste: gleiche Flaeche wie die Leiste, schmale Fugen, nur
+           die aeusseren Ecken gerundet. */
+        .modes { display: flex; gap: 2px; }
         .modes button {
           flex: 1; min-width: 0; min-height: 44px;
           display: inline-flex; align-items: center; justify-content: center; gap: 7px;
-          border: 1px solid ${f.mode_inactive}; border-radius: 8px;
-          background: transparent; color: var(--primary-text-color);
+          border: 1px solid transparent; border-radius: 0;
+          background: ${f.track}; color: var(--primary-text-color);
           font: inherit; font-size: 1.06rem; cursor: pointer;
         }
+        .modes button:first-child { border-radius: 8px 0 0 8px; }
+        .modes button:last-child { border-radius: 0 8px 8px 0; }
+        .modes button:only-child { border-radius: 8px; }
         .modes button ha-icon { --mdc-icon-size: 22px; }
-        .modes button[aria-pressed="true"] { font-weight: 600; color: #16181a; }
+        .modes button[aria-pressed="true"] { font-weight: 600; color: #eef3f7; }
         .modes button[aria-pressed="true"][data-mode="auto"] { background: ${f.mode_auto}; border-color: ${f.mode_auto}; }
         .modes button[aria-pressed="true"][data-mode="heat"],
         .modes button[aria-pressed="true"][data-mode="heat_cool"] { background: ${f.mode_heat}; border-color: ${f.mode_heat}; }
         .modes button[aria-pressed="true"][data-mode="off"],
         .modes button[aria-pressed="true"][data-mode="cool"] {
-          background: ${f.mode_off}; border-color: ${f.mode_off}; color: #eef3f7;
+          background: ${f.mode_off}; border-color: ${f.mode_off};
         }
 
         /* Ersetzt im Bearbeitungsmodus Anzeigeleiste und Modus-Knoepfe im
@@ -410,7 +614,7 @@ class ThermostatBarCard extends HTMLElement {
           }
           .lock[aria-pressed="true"]:hover { color: ${f.lock_active}; }
           .modes button:hover {
-            background: rgba(255, 255, 255, 0.07);
+            filter: brightness(1.15);
             border-color: var(--secondary-text-color);
           }
           .modes button[aria-pressed="true"]:hover { filter: brightness(1.1); }
@@ -447,7 +651,16 @@ class ThermostatBarCard extends HTMLElement {
           </span>
           ${c.show_status ? '<span class="status"><ha-icon></ha-icon><span class="stext"></span></span>' : ""}
         </div>
-        <div class="modes"></div>
+        <div class="instrument">
+          <div class="tagesplan" aria-hidden="true">
+            <div class="tp-clip">
+              <div class="tp-marken"></div>
+              <svg class="tp-kurve"></svg>
+            </div>
+            <div class="tp-jetzt"></div>
+          </div>
+          <div class="modes"></div>
+        </div>
       </ha-card>
     `;
 
@@ -456,11 +669,13 @@ class ThermostatBarCard extends HTMLElement {
       name: this.shadowRoot.querySelector(".name"),
       lock: this.shadowRoot.querySelector(".lock"),
       status: this.shadowRoot.querySelector(".status"),
+      instrument: this.shadowRoot.querySelector(".instrument"),
+      plan: this.shadowRoot.querySelector(".tagesplan"),
       modes: this.shadowRoot.querySelector(".modes")
     };
 
     this._anzeigeLeiste = this._leisteErzeugen(this._config.edge_space, false);
-    this._el.karte.insertBefore(this._anzeigeLeiste.wrap, this._el.modes);
+    this._el.instrument.insertBefore(this._anzeigeLeiste.wrap, this._el.modes);
 
     this._haltenBinden(this._anzeigeLeiste.wrap);
     this._modiBauen();
@@ -472,6 +687,7 @@ class ThermostatBarCard extends HTMLElement {
     if (this._beobachter) this._beobachter.disconnect();
     this._beobachter = new ResizeObserver(() => this._werteSchreiben());
     this._beobachter.observe(this._anzeigeLeiste.wrap);
+    this._beobachter.observe(this._el.plan);
   }
 
   /**
@@ -488,9 +704,9 @@ class ThermostatBarCard extends HTMLElement {
       <div class="trackclip">
         <div class="fill"></div>
         <div class="demand"></div>
-        <div class="markerline"></div>
         <div class="haltefortschritt"></div>
       </div>
+      <div class="markerline"></div>
       <div class="markerdot"></div>
       ${this._config.show_labels ? '<span class="lbl ist"></span><span class="lbl soll"></span>' : ""}
     `;
@@ -513,10 +729,11 @@ class ThermostatBarCard extends HTMLElement {
       const breite = clip.offsetWidth;
       const istPx = ist === null ? 0 : this._anteil(ist) * breite;
       const sollPx = soll === null ? 0 : this._anteil(soll) * breite;
+      const strichPx = Math.round(sollPx);
 
       fill.style.width = `${istPx}px`;
-      linie.style.left = `${sollPx}px`;
-      punkt.style.left = `${sollPx}px`;
+      linie.style.left = `${strichPx}px`;
+      punkt.style.left = `${strichPx}px`;
 
       wrap.classList.toggle("heizt", geraetHeizt);
 
@@ -600,7 +817,7 @@ class ThermostatBarCard extends HTMLElement {
     const c = this._config;
     const z = this._zustand;
     const el = this._el;
-    if (!el) return;
+    if (!el || !z) return;
 
     el.name.textContent = c.name || z.attributes.friendly_name || c.entity;
 
@@ -633,6 +850,7 @@ class ThermostatBarCard extends HTMLElement {
 
     this._modiAktualisieren();
     this._sperreAktualisieren();
+    this._planZeichnen();
   }
 
   _statustext(art) {
@@ -664,7 +882,7 @@ class ThermostatBarCard extends HTMLElement {
     this._el.lock.setAttribute("aria-pressed", String(gesperrt));
     this._el.lock.setAttribute(
       "title",
-      gesperrt ? "Bedienung am Geraet gesperrt" : "Bedienung am Geraet moeglich"
+      gesperrt ? "Bedienung am Gerät gesperrt" : "Bedienung am Gerät möglich"
     );
     this._el.lock.innerHTML = `<ha-icon icon="${gesperrt ? "mdi:lock" : "mdi:lock-open-variant"}"></ha-icon>`;
   }
@@ -679,6 +897,255 @@ class ThermostatBarCard extends HTMLElement {
       this._hass.callService("lock", gesperrt ? "unlock" : "lock", { entity_id: id });
     } else {
       this._hass.callService("homeassistant", "toggle", { entity_id: id });
+    }
+  }
+
+  // --------------------------------------------------------------- Tagesplan
+
+  _planZeichnen() {
+    const plan = this._el && this._el.plan;
+    if (!plan || !this._zustand) return;
+
+    const sichtbar = this._tagesplanSichtbar;
+    plan.style.display = sichtbar ? "" : "none";
+    if (!sichtbar) return;
+
+    const jetzt = this._jetzt();
+    const abschnitte = tagesabschnitte(this._planDaten[jetzt.tag]);
+    const breite = plan.offsetWidth;
+    const hoehe = plan.offsetHeight;
+    const prozent = (m) => `${(m / TAGESMINUTEN) * 100}%`;
+
+    plan.querySelector(".tp-marken").innerHTML = ZEITMARKEN_MIN
+      .map((m) => `<div class="tp-marke" style="left:${prozent(m)}"></div>`)
+      .join("");
+    plan.querySelector(".tp-jetzt").style.left = prozent(jetzt.minute);
+
+    const svg = plan.querySelector(".tp-kurve");
+    if (!abschnitte.length || !breite || !hoehe) {
+      svg.innerHTML = "";
+      return;
+    }
+    svg.innerHTML = this._kurveSvg(abschnitte, jetzt.minute, breite, hoehe);
+  }
+
+  /**
+   * Hoehe der Kurve: unten der kleinste Planwert der Woche, oben der
+   * groesste oder der Sollwert, falls hoeher. Im Modus Aus zaehlt der
+   * Sollwert nicht, weil das Geraet dort den Frostschutzwert meldet.
+   * Die Farben haengen davon nicht ab, sie folgen der festen Farbskala.
+   */
+  _hoehenskala(abschnitte) {
+    const werte = wochentemperaturen(this._planDaten);
+    if (!werte.length) werte.push(...abschnitte.map((a) => a.temp));
+    let oben = Math.max(...werte);
+    const soll = this._soll;
+    if (this._zustand.state !== "off" && soll !== null) oben = Math.max(oben, soll);
+    return { unten: Math.min(...werte) - SKALA_LUFT_GRAD, oben: oben + SKALA_LUFT_GRAD };
+  }
+
+  _kurveSvg(abschnitte, minute, breite, hoehe) {
+    const p = this._config.schedule;
+    const innenrand = KURVE_LINIE_PX + 1;
+    const skala = this._hoehenskala(abschnitte);
+    const spanne = skala.oben - skala.unten;
+    const x = (m) => (m / TAGESMINUTEN) * breite;
+    // Ohne Begrenzung fuer den Farbverlauf: er haengt an der festen
+    // Farbskala und darf deshalb ueber die Flaeche hinausreichen.
+    const yUnbegrenzt = (t) => {
+      const anteil = spanne <= 0 ? 0.5 : (t - skala.unten) / spanne;
+      return hoehe - innenrand - anteil * (hoehe - 2 * innenrand);
+    };
+    const y = (t) => Math.min(hoehe - innenrand, Math.max(innenrand, yUnbegrenzt(t)));
+    const abblassen = (von, bis, deckkraft) =>
+      `<rect x="${x(von)}" y="0" width="${Math.max(0, x(bis) - x(von))}" height="${hoehe}"` +
+      ` style="fill: var(--card-background-color, #1c1c1c)" opacity="${deckkraft}"/>`;
+
+    const minFarbe = cssFarbe(p.min_color);
+    const maxFarbe = cssFarbe(p.max_color);
+    const stopps = [];
+    for (let k = 0; k <= 8; k++) {
+      stopps.push(
+        `<stop offset="${k / 8}" style="stop-color: color-mix(in oklab, ${maxFarbe} ${(k / 8) * 100}%, ${minFarbe})"/>`
+      );
+    }
+
+    const pfad = this._kurvenpfad(abschnitte, x, y);
+    const teile = [
+      `<defs><linearGradient id="tp-farbskala" gradientUnits="userSpaceOnUse" x1="0"` +
+        ` y1="${yUnbegrenzt(p.min_temp)}" x2="0" y2="${yUnbegrenzt(p.max_temp)}">${stopps.join("")}</linearGradient></defs>`,
+      `<path d="${pfad} L ${breite} ${hoehe} L 0 ${hoehe} Z" fill="url(#tp-farbskala)" opacity="${KURVE_FLAECHE_DECKKRAFT}"/>`,
+      `<path d="${pfad}" fill="none" stroke="url(#tp-farbskala)" stroke-width="${KURVE_LINIE_PX}"` +
+        ` stroke-linejoin="round" stroke-linecap="round"/>`
+    ];
+
+    if (p.show_history) teile.push(this._verlaufSvg(minute, x, y));
+
+    const abweichung = this._abweichung(abschnitte, minute);
+    if (abweichung) teile.push(this._abweichungSvg(abweichung, abschnitte, skala, x, y, breite, abblassen));
+
+    return teile.join("");
+  }
+
+  /**
+   * Stufen mit Uebergaengen: jeder Schaltpunkt wird zu einer geglaetteten
+   * Rampe, mittig um den Schaltpunkt. Kurze Abschnitte begrenzen die Rampe,
+   * damit kein Plateau verschwindet.
+   */
+  _kurvenpfad(abschnitte, x, y) {
+    const halb = RAMPE_MIN / 2;
+    let d = `M 0 ${y(abschnitte[0].temp)}`;
+    for (let i = 0; i + 1 < abschnitte.length; i++) {
+      const a = abschnitte[i];
+      const b = abschnitte[i + 1];
+      const r = Math.min(halb, (a.bis - a.von) / 2, (b.bis - b.von) / 2);
+      const x1 = x(a.bis - r);
+      const x2 = x(a.bis + r);
+      const y1 = y(a.temp);
+      const y2 = y(b.temp);
+      d += ` L ${x1} ${y1}`;
+      if (r > 0) {
+        const xm = (x1 + x2) / 2;
+        d += ` C ${xm} ${y1} ${xm} ${y2} ${x2} ${y2}`;
+      } else {
+        d += ` L ${x2} ${y2}`;
+      }
+    }
+    return `${d} L ${x(TAGESMINUTEN)} ${y(abschnitte[abschnitte.length - 1].temp)}`;
+  }
+
+  /**
+   * Weicht der Sollwert vom Plan ab, gilt die Abweichung im Automatikbetrieb
+   * bis zum naechsten Schaltpunkt; Homematic IP kehrt dann ins Profil zurueck.
+   * In jedem anderen Modus ruht das Profil, die Abweichung gilt bis Tagesende.
+   */
+  _abweichung(abschnitte, minute) {
+    const modus = this._zustand.state;
+    const soll = this._soll;
+
+    if (modus === "off") return { von: minute, bis: TAGESMINUTEN, aus: true, text: this._modusBeschriftung({ mode: "off" }) };
+    if (modus !== "auto") {
+      if (soll === null) return null;
+      return {
+        von: minute,
+        bis: TAGESMINUTEN,
+        aus: false,
+        text: `${this._modusBeschriftung({ mode: modus })} ${this._zahlteil(soll)}°`
+      };
+    }
+
+    const planwert = wertUm(abschnitte, minute);
+    if (soll === null || planwert === null || Math.abs(soll - planwert) < ABWEICHUNG_SCHWELLE_GRAD) return null;
+    return {
+      von: minute,
+      bis: naechsterSchaltpunkt(abschnitte, minute),
+      aus: false,
+      text: `Manuell ${this._zahlteil(soll)}°`
+    };
+  }
+
+  _abweichungSvg(abweichung, abschnitte, skala, x, y, breite, abblassen) {
+    const f = this._config.colors;
+    const teile = [abblassen(abweichung.von, abweichung.bis, abweichung.aus ? 0.7 : 0.6)];
+    let textHoehe = y(skala.unten);
+
+    if (!abweichung.aus) {
+      const ys = y(this._soll);
+      const strich = `stroke="${f.target}" stroke-width="${KURVE_LINIE_PX}" stroke-dasharray="5 4" stroke-linecap="round"`;
+      const planVorher = wertUm(abschnitte, abweichung.von);
+      const planNachher = wertUm(abschnitte, Math.min(abweichung.bis, TAGESMINUTEN - 1));
+
+      // Senkrechte Anschluesse zeigen, wo die Abweichung vom Plan abzweigt
+      // und wohin sie zurueckkehrt.
+      if (planVorher !== null) {
+        teile.push(`<line x1="${x(abweichung.von)}" y1="${y(planVorher)}" x2="${x(abweichung.von)}" y2="${ys}" ${strich}/>`);
+      }
+      teile.push(`<line x1="${x(abweichung.von)}" y1="${ys}" x2="${x(abweichung.bis)}" y2="${ys}" ${strich}/>`);
+      if (abweichung.bis < TAGESMINUTEN && planNachher !== null) {
+        teile.push(`<line x1="${x(abweichung.bis)}" y1="${ys}" x2="${x(abweichung.bis)}" y2="${y(planNachher)}" ${strich}/>`);
+      }
+      textHoehe = ys;
+    }
+
+    // Die Beschriftung steht immer, auch wenn die Abweichung kuerzer ist als der Text.
+    const textY = textHoehe - 6 < 10 ? textHoehe + 14 : textHoehe - 6;
+    const textX = Math.min(x(abweichung.von) + 6, breite - 70);
+    const farbe = abweichung.aus ? "var(--secondary-text-color)" : f.target;
+    teile.push(`<text x="${textX}" y="${textY}" style="fill: ${farbe}">${abweichung.text}</text>`);
+    return teile.join("");
+  }
+
+  // ----------------------------------------------------------------- Verlauf
+
+  /**
+   * Gemessene Ist-Temperatur von 0 Uhr bis jetzt, gedaempft und gestrichelt,
+   * damit die Planlinie fuehrend bleibt. Endet am aktuellen Ist-Wert.
+   */
+  _verlaufSvg(minute, x, y) {
+    const tagesbeginn = Date.now() - minute * 60000;
+    const punkte = this._verlauf
+      .map((p) => ({ m: Math.max(0, (p.zeit - tagesbeginn) / 60000), t: p.t }))
+      .filter((p) => p.m <= minute);
+    if (this._ist !== null) punkte.push({ m: minute, t: this._ist });
+    if (punkte.length < 2) return "";
+
+    const geglaettet = punkte.map((p, i) => {
+      const fenster = punkte.slice(Math.max(0, i - 3), i + 4);
+      return { m: p.m, t: fenster.reduce((summe, q) => summe + q.t, 0) / fenster.length };
+    });
+    geglaettet[geglaettet.length - 1] = punkte[punkte.length - 1];
+
+    const d = geglaettet
+      .map((p, i) => `${i === 0 ? "M" : "L"} ${x(p.m)} ${y(p.t)}`)
+      .join(" ");
+    const farbe = `color-mix(in oklab, ${cssFarbe(this._config.schedule.history_color)} ` +
+      `${VERLAUF_FARBSTAERKE_PROZENT}%, var(--card-background-color, #1c1c1c))`;
+    return `<path d="${d}" fill="none" style="stroke: ${farbe}" stroke-width="${VERLAUF_LINIE_PX}"` +
+      ` stroke-dasharray="4 3" stroke-linejoin="round" stroke-linecap="round"/>`;
+  }
+
+  _verlaufBeiBedarfLaden() {
+    if (!this._tagesplanSichtbar || !this._config.schedule.show_history) return;
+    if (!this._hass.callWS || this._verlaufLaedt) return;
+    if (Date.now() - this._verlaufGeladenAm < VERLAUF_ABRUF_MS) return;
+    this._verlaufLaden();
+  }
+
+  /**
+   * Holt die Ist-Temperatur des heutigen Tages aus dem Verlauf von Home
+   * Assistant. Nur mit minimal_response: false traegt jeder Eintrag seine
+   * Attribute; lu ist der Zeitpunkt in Sekunden.
+   */
+  async _verlaufLaden() {
+    this._verlaufLaedt = true;
+    this._verlaufGeladenAm = Date.now();
+    const entitaet = this._config.entity;
+    try {
+      const ende = new Date();
+      const beginn = new Date(ende.getTime() - this._jetzt().minute * 60000);
+      const antwort = await this._hass.callWS({
+        type: "history/history_during_period",
+        start_time: beginn.toISOString(),
+        end_time: ende.toISOString(),
+        entity_ids: [entitaet],
+        minimal_response: false,
+        no_attributes: false,
+        significant_changes_only: false
+      });
+      if (entitaet !== this._config.entity) return;
+      this._verlauf = ((antwort && antwort[entitaet]) || [])
+        .map((eintrag) => ({
+          zeit: Number(eintrag.lu) * 1000,
+          t: Number(eintrag.a && eintrag.a.current_temperature)
+        }))
+        .filter((p) => Number.isFinite(p.zeit) && Number.isFinite(p.t))
+        .sort((a, b) => a.zeit - b.zeit);
+    } catch (fehler) {
+      // Ohne Verlauf bleibt der Tagesplan vollstaendig; die Linie fehlt nur.
+      this._verlauf = [];
+    } finally {
+      this._verlaufLaedt = false;
+      if (this._el) this._planZeichnen();
     }
   }
 
@@ -778,9 +1245,10 @@ class ThermostatBarCard extends HTMLElement {
 
     // Als Ueberlagerung waere der Bearbeitungsmodus hoeher als die Karte und
     // wuerde ueber ihren Rand ragen. Deshalb ersetzt er die Anzeige im Fluss.
+    // Der Tagesplan bleibt darueber sichtbar.
     this._anzeigeLeiste.wrap.style.display = "none";
     this._el.modes.style.display = "none";
-    this._el.karte.appendChild(box);
+    this._el.instrument.appendChild(box);
     this._editBox = box;
     if (this._beobachter) this._beobachter.observe(this._editLeiste.wrap);
 
@@ -860,6 +1328,7 @@ class ThermostatBarCard extends HTMLElement {
     this._haltenAbbrechen();
     this._editSchliessen();
     clearTimeout(this._freigabeTimer);
+    clearInterval(this._uhr);
     if (this._beobachter) {
       this._beobachter.disconnect();
       this._beobachter = null;
@@ -896,6 +1365,26 @@ const EDITOR_SCHEMA = [
   },
   {
     type: "expandable",
+    name: "schedule",
+    title: "Tagesplan",
+    schema: [
+      { name: "show", selector: { boolean: {} } },
+      {
+        type: "grid",
+        name: "",
+        schema: [
+          { name: "min_temp", selector: { number: { min: 0, max: 35, step: 0.5, mode: "box", unit_of_measurement: "°C" } } },
+          { name: "max_temp", selector: { number: { min: 0, max: 35, step: 0.5, mode: "box", unit_of_measurement: "°C" } } },
+          { name: "min_color", selector: { ui_color: {} } },
+          { name: "max_color", selector: { ui_color: {} } }
+        ]
+      },
+      { name: "show_history", selector: { boolean: {} } },
+      { name: "history_color", selector: { ui_color: {} } }
+    ]
+  },
+  {
+    type: "expandable",
     name: "colors",
     title: "Farben",
     schema: Object.keys(STANDARDFARBEN).map((schluessel) => ({
@@ -909,16 +1398,59 @@ const EDITOR_BESCHRIFTUNGEN = {
   entity: "Thermostat",
   name: "Name",
   icon: "Symbol vor dem Namen",
-  lock_entity: "Entitaet der Bedienungssperre",
-  height: "Hoehe der Anzeigeleiste",
-  edit_height: "Hoehe im Bearbeitungsmodus",
+  lock_entity: "Entität der Bedienungssperre",
+  height: "Höhe der Anzeigeleiste",
+  edit_height: "Höhe im Bearbeitungsmodus",
   edge_space: "Randbereich",
-  tolerance: "Toleranz fuer Erreicht",
+  tolerance: "Toleranz für Erreicht",
   show_labels: "Werte in der Leiste",
   show_status: "Statusanzeige",
-  show_icons: "Symbole auf den Knoepfen",
-  show_mode_labels: "Text auf den Knoepfen"
+  show_icons: "Symbole auf den Knöpfen",
+  show_mode_labels: "Text auf den Knöpfen",
+  show: "Tagesplan anzeigen",
+  min_temp: "Farbskala von",
+  max_temp: "Farbskala bis",
+  min_color: "Farbe Skalenanfang",
+  max_color: "Farbe Skalenende",
+  show_history: "Gemessenen Verlauf zeigen",
+  history_color: "Farbe Verlauf"
 };
+
+// Was der Editor anzeigt, wenn ein Schluessel nicht im YAML steht. Ohne diese
+// Vorgaben zeigte er Schalter als aus und Zahlenfelder leer, obwohl die Karte
+// die Werte nutzt.
+const EDITOR_VORGABEN = { ...KARTEN_VORGABEN, schedule: TAGESPLAN_VORGABEN };
+delete EDITOR_VORGABEN.name;
+delete EDITOR_VORGABEN.lock_entity;
+delete EDITOR_VORGABEN.hvac_modes;
+
+/** Ergaenzt fehlende Schluessel um ihre Vorgabe, damit der Editor sie zeigt. */
+function mitVorgaben(config) {
+  return {
+    ...EDITOR_VORGABEN,
+    ...config,
+    schedule: { ...TAGESPLAN_VORGABEN, ...(config.schedule || {}) }
+  };
+}
+
+/** Entfernt Werte, die ihrer Vorgabe entsprechen, damit das YAML schlank bleibt. */
+function ohneVorgaben(config) {
+  const ergebnis = { ...config };
+  Object.keys(EDITOR_VORGABEN).forEach((schluessel) => {
+    if (schluessel !== "schedule" && ergebnis[schluessel] === EDITOR_VORGABEN[schluessel]) {
+      delete ergebnis[schluessel];
+    }
+  });
+  const plan = { ...(config.schedule || {}) };
+  Object.keys(TAGESPLAN_VORGABEN).forEach((schluessel) => {
+    if (plan[schluessel] === TAGESPLAN_VORGABEN[schluessel] || plan[schluessel] === undefined) {
+      delete plan[schluessel];
+    }
+  });
+  if (Object.keys(plan).length) ergebnis.schedule = plan;
+  else delete ergebnis.schedule;
+  return ergebnis;
+}
 
 class ThermostatBarCardEditor extends HTMLElement {
   setConfig(config) {
@@ -937,11 +1469,11 @@ class ThermostatBarCardEditor extends HTMLElement {
     if (!this._form) {
       this._form = document.createElement("ha-form");
       this._form.computeLabel = (eintrag) =>
-        EDITOR_BESCHRIFTUNGEN[eintrag.name] || eintrag.name;
+        EDITOR_BESCHRIFTUNGEN[eintrag.name] || eintrag.title || eintrag.name;
       this._form.addEventListener("value-changed", (ereignis) => {
         this.dispatchEvent(
           new CustomEvent("config-changed", {
-            detail: { config: ereignis.detail.value },
+            detail: { config: ohneVorgaben(ereignis.detail.value) },
             bubbles: true,
             composed: true
           })
@@ -952,7 +1484,7 @@ class ThermostatBarCardEditor extends HTMLElement {
 
     this._form.hass = this._hass;
     this._form.schema = EDITOR_SCHEMA;
-    this._form.data = this._config;
+    this._form.data = mitVorgaben(this._config);
   }
 }
 
@@ -964,7 +1496,7 @@ window.customCards.push({
   type: "thermostat-bar-card",
   name: "Thermostat Bar Card",
   description:
-    "Waagerechte Thermostat-Karte mit Ist-Fuellung, Heizanforderung und Bearbeitungsmodus.",
+    "Waagerechte Thermostat-Karte mit Ist-Füllung, Heizanforderung, Tagesplan und Bearbeitungsmodus.",
   preview: true,
   documentationURL: "https://github.com/SvMo85/ha-thermostat-bar-card"
 });
