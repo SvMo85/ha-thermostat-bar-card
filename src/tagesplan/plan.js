@@ -1,4 +1,4 @@
-import { TAGESMINUTEN } from "../konstanten.js";
+﻿import { TAGESMINUTEN } from "../konstanten.js";
 
 /** "06:45" -> 405, "24:00" -> 1440 */
 export function uhrzeitInMinuten(text) {
@@ -66,6 +66,16 @@ export function verlaufsabschnitte(punkte, farbeVon) {
     abschnitte.push({ farbe, punkte: [p] });
   });
   return abschnitte.filter((a) => a.punkte.length >= 2);
+}
+
+/** Letzter Messpunkt bis zum Zeitpunkt; null, wenn der Verlauf erst spaeter beginnt. Punkte aufsteigend sortiert. */
+export function verlaufspunktUm(punkte, zeit) {
+  let treffer = null;
+  for (const p of punkte) {
+    if (p.zeit > zeit) break;
+    treffer = p;
+  }
+  return treffer;
 }
 
 /** Alle Temperaturen der Woche, fuer eine Hoehenskala, die nicht taeglich springt. */

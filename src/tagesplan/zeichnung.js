@@ -1,4 +1,4 @@
-import { cssFarbe } from "../farben.js";
+﻿import { cssFarbe } from "../farben.js";
 import { ABWEICHUNG_SCHWELLE_GRAD, KURVE_FLAECHE_DECKKRAFT, KURVE_LINIE_PX, RAMPE_MIN, SKALA_LUFT_GRAD, TAGESMINUTEN, VERLAUF_ABRUF_MS, VERLAUF_FARBSTAERKE_PROZENT, VERLAUF_LINIE_PX, ZEITMARKEN_MIN } from "../konstanten.js";
 import { naechsterSchaltpunkt, tagesabschnitte, verlaufsabschnitte, wertUm, wochentemperaturen } from "./plan.js";
 
@@ -253,6 +253,7 @@ export class TagesplanTeil {
         .map((eintrag) => ({
           zeit: Number(eintrag.lu) * 1000,
           t: Number(eintrag.a && eintrag.a.current_temperature),
+          soll: eintrag.a && eintrag.a.temperature !== null ? Number(eintrag.a.temperature) : NaN,
           aktion: eintrag.a ? eintrag.a.hvac_action : undefined
         }))
         .filter((p) => Number.isFinite(p.zeit) && Number.isFinite(p.t))

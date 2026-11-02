@@ -115,6 +115,7 @@ Ohne `label` nimmt die Karte die Übersetzung von Home Assistant und folgt damit
 
 - **Abweichungen vom Plan** als gestrichelte Linie mit Beschriftung. Im Automatikbetrieb endet eine manuell gesetzte Temperatur am nächsten Schaltpunkt, weil Homematic IP dann ins Profil zurückkehrt. Heizen und Aus gelten bis zum Tagesende.
 - **Der gemessene Verlauf** der Ist-Temperatur von 0 Uhr bis jetzt, aus dem Verlauf von Home Assistant. Wo das Gerät laut `hvac_action` geheizt hat, ist die Linie rötlich, sonst bläulich.
+- **Werte unter der Maus**: Fährt die Maus über den Tagesplan, stehen darüber Uhrzeit, Soll, Ist und Heizstatus an dieser Stelle. Für Uhrzeiten, die noch kommen, steht dort nur der Planwert.
 
 Der Plan stammt aus dem Attribut `schedule_data`, das die Integration [Homematic(IP) Local](https://github.com/SukramJ/homematicip_local) an jeder Klima-Entität bereitstellt. Fehlt das Attribut, blendet die Karte den Tagesplan aus.
 

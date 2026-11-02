@@ -1,8 +1,8 @@
-// Thermostat Bar Card 0.4.0
+// Thermostat Bar Card 1.0.0
 // Gebaut aus src/ mit npm run build. Nicht von Hand bearbeiten.
 
 // src/konstanten.js
-var CARD_VERSION = "0.4.0";
+var CARD_VERSION = "1.0.0";
 var IST_FARBE = "var(--primary-color, #009ac7)";
 var WAERME_FARBE = "var(--red-color, #f44336)";
 var STANDARDFARBEN = {
@@ -1154,6 +1154,25 @@ function karteStil(c, f) {
           background: var(--primary-text-color); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55);
           border-radius: 1px; pointer-events: none;
         }
+        .tp-hover {
+          position: absolute; top: 0; bottom: 0; width: 1px;
+          background: var(--secondary-text-color); opacity: 0.8; pointer-events: none;
+        }
+        /* Unter dem Plan, damit er nicht am Kartenrand klebt und die Kurve frei bleibt. */
+        .tp-hinweis {
+          position: absolute; top: calc(100% + 8px); z-index: 5;
+          display: grid; grid-template-columns: auto auto; column-gap: 14px; row-gap: 2px;
+          padding: 7px 10px; border-radius: 8px; border: 1px solid var(--divider-color);
+          background: var(--card-background-color, #1c1c1c); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+          font-size: 0.82rem; line-height: 1.3; white-space: nowrap; pointer-events: none;
+          font-variant-numeric: tabular-nums;
+        }
+        .tp-hinweis .hw-zeit { grid-column: 1 / -1; font-weight: 600; margin-bottom: 2px; }
+        .tp-hinweis .hw-name { color: var(--secondary-text-color); }
+        .tp-hinweis .hw-wert { text-align: right; }
+        .tp-hinweis .hw-aktion { grid-column: 1 / -1; margin-top: 2px; color: var(--secondary-text-color); }
+        .tp-hinweis .hw-aktion.heating { color: ${f.status_heating}; }
+        .tp-hover[hidden], .tp-hinweis[hidden] { display: none; }
 
         .trackwrap { position: relative; transition: transform 120ms ease; }
         .trackwrap.haelt { transform: scale(0.98); }
@@ -1398,12 +1417,96 @@ function verlaufsabschnitte(punkte, farbeVon) {
   });
   return abschnitte.filter((a) => a.punkte.length >= 2);
 }
+function verlaufspunktUm(punkte, zeit) {
+  let treffer = null;
+  for (const p of punkte) {
+    if (p.zeit > zeit) break;
+    treffer = p;
+  }
+  return treffer;
+}
 function wochentemperaturen(planDaten) {
   return Object.values(planDaten || {}).flatMap((tag) => [
     Number(tag.base_temperature),
     ...(tag.periods || []).map((p) => Number(p.temperature))
   ]).filter(Number.isFinite);
 }
+
+// src/tagesplan/hinweis.js
+var TagesplanHinweisTeil = class {
+  _hinweisBinden(plan) {
+    plan.addEventListener("pointermove", (ereignis) => {
+      if (ereignis.pointerType !== "mouse" || ereignis.buttons) {
+        this._hinweisVerbergen();
+        return;
+      }
+      this._hinweisZeigen(ereignis.clientX);
+    });
+    plan.addEventListener("pointerleave", () => this._hinweisVerbergen());
+    plan.addEventListener("pointerdown", () => this._hinweisVerbergen());
+  }
+  _hinweisZeigen(clientX) {
+    const plan = this._el && this._el.plan;
+    if (!plan || !this._zustand || !this._tagesplanSichtbar) return;
+    const rahmen = plan.getBoundingClientRect();
+    if (!rahmen.width) return;
+    const anteil = Math.min(1, Math.max(0, (clientX - rahmen.left) / rahmen.width));
+    const minute = Math.min(TAGESMINUTEN - 1, Math.floor(anteil * TAGESMINUTEN));
+    const linie = plan.querySelector(".tp-hover");
+    const hinweis = plan.querySelector(".tp-hinweis");
+    hinweis.innerHTML = this._hinweisHtml(this._hinweisWerte(minute));
+    linie.style.left = `${anteil * 100}%`;
+    linie.hidden = false;
+    hinweis.hidden = false;
+    const breite = hinweis.offsetWidth;
+    const x = anteil * rahmen.width;
+    hinweis.style.left = `${Math.min(rahmen.width - breite, Math.max(0, x - breite / 2))}px`;
+  }
+  _hinweisVerbergen() {
+    const plan = this._el && this._el.plan;
+    if (!plan) return;
+    plan.querySelector(".tp-hover").hidden = true;
+    plan.querySelector(".tp-hinweis").hidden = true;
+  }
+  /** Jetzt gilt der Zustand, davor der Verlauf, danach nur der Plan. */
+  _hinweisWerte(minute) {
+    const jetzt = this._jetzt();
+    const planwert = wertUm(tagesabschnitte(this._planDaten[jetzt.tag]), minute);
+    const zeit = uhrzeitAus(minute);
+    if (minute > jetzt.minute) return { zeit, plan: planwert, soll: null, ist: null, aktion: null };
+    if (minute === jetzt.minute) {
+      return { zeit, plan: planwert, soll: this._soll, ist: this._ist, aktion: this._zustand.attributes.hvac_action };
+    }
+    const zeitpunkt = Date.now() - (jetzt.minute - minute) * 6e4;
+    const punkt = verlaufspunktUm(this._verlauf, zeitpunkt);
+    if (!punkt) return { zeit, plan: planwert, soll: null, ist: null, aktion: null };
+    return {
+      zeit,
+      plan: planwert,
+      soll: Number.isFinite(punkt.soll) ? punkt.soll : null,
+      ist: punkt.t,
+      aktion: punkt.aktion
+    };
+  }
+  _hinweisHtml(w) {
+    const zeile = (name, wert) => `<span class="hw-name">${name}</span><span class="hw-wert">${this._zahlteil(wert)}°</span>`;
+    const teile = [`<div class="hw-zeit">${w.zeit}</div>`];
+    if (w.soll !== null) teile.push(zeile("Soll", w.soll));
+    else if (w.plan !== null) teile.push(zeile("Plan", w.plan));
+    if (w.ist !== null) teile.push(zeile("Ist", w.ist));
+    if (w.aktion) teile.push(`<div class="hw-aktion${w.aktion}">${this._aktionstext(w.aktion)}</div>`);
+    return teile.join("");
+  }
+  _aktionstext(aktion) {
+    const uebersetzt = this._hass.localize(
+      `component.climate.entity_component._.state_attributes.hvac_action.state.${aktion}`
+    );
+    if (uebersetzt) return uebersetzt;
+    if (aktion === "heating") return "Heizt";
+    if (aktion === "off") return "Aus";
+    return "Bereit";
+  }
+};
 
 // src/tagesplan/zeichnung.js
 var TagesplanTeil = class {
@@ -1609,6 +1712,7 @@ var TagesplanTeil = class {
       this._verlauf = (antwort && antwort[entitaet] || []).map((eintrag) => ({
         zeit: Number(eintrag.lu) * 1e3,
         t: Number(eintrag.a && eintrag.a.current_temperature),
+        soll: eintrag.a && eintrag.a.temperature !== null ? Number(eintrag.a.temperature) : NaN,
         aktion: eintrag.a ? eintrag.a.hvac_action : void 0
       })).filter((p) => Number.isFinite(p.zeit) && Number.isFinite(p.t)).sort((a, b) => a.zeit - b.zeit);
     } catch (fehler) {
@@ -1816,6 +1920,8 @@ var ThermostatBarCard = class extends HTMLElement {
               <div class="haltefortschritt"></div>
             </div>
             <div class="tp-jetzt"></div>
+            <div class="tp-hover" hidden></div>
+            <div class="tp-hinweis" hidden></div>
           </div>
           <div class="modes"></div>
         </div>
@@ -1834,6 +1940,7 @@ var ThermostatBarCard = class extends HTMLElement {
     this._el.instrument.insertBefore(this._anzeigeLeiste.wrap, this._el.modes);
     this._haltenBinden(this._anzeigeLeiste.wrap, this._anzeigeLeiste.fortschritt, () => this._editOeffnen());
     this._haltenBinden(this._el.plan, this._el.plan.querySelector(".haltefortschritt"), () => this._profilOeffnen());
+    this._hinweisBinden(this._el.plan);
     this._modiBauen();
     if (this._el.lock) {
       this._el.lock.addEventListener("click", () => this._sperreUmschalten());
@@ -2017,7 +2124,7 @@ var ThermostatBarCard = class extends HTMLElement {
     }
   }
 };
-teileEinbauen(ThermostatBarCard, TagesplanTeil, BedienungTeil);
+teileEinbauen(ThermostatBarCard, TagesplanTeil, TagesplanHinweisTeil, BedienungTeil);
 
 // src/thermostat-bar-card.js
 console.info(

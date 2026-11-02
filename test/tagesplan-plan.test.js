@@ -1,10 +1,20 @@
 ﻿import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  naechsterSchaltpunkt, tagesabschnitte, uhrzeitInMinuten, verlaufsabschnitte, wertUm, wochentemperaturen
+  naechsterSchaltpunkt, tagesabschnitte, uhrzeitInMinuten, verlaufsabschnitte, verlaufspunktUm, wertUm, wochentemperaturen
 } from "../src/tagesplan/plan.js";
 
 const P = (starttime, endtime, temperature) => ({ starttime, endtime, temperature });
+
+test("Wenn der Zeitpunkt zwischen zwei Messungen liegt dann gilt die fruehere", () => {
+  // Messungen um 100 und 200, gefragt ist 150
+  const punkte = [{ zeit: 100, t: 18 }, { zeit: 200, t: 19 }];
+  assert.equal(verlaufspunktUm(punkte, 150).t, 18);
+});
+
+test("Wenn der Verlauf erst nach dem Zeitpunkt beginnt dann gibt es keinen Messpunkt", () => {
+  assert.equal(verlaufspunktUm([{ zeit: 100, t: 18 }], 50), null);
+});
 
 test("Wenn 24:00 gelesen wird dann sind es 1440 Minuten", () => {
   assert.equal(uhrzeitInMinuten("24:00"), 1440);

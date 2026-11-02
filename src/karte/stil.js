@@ -1,4 +1,4 @@
-import { RAND_BEARBEITEN_PX } from "../konstanten.js";
+﻿import { RAND_BEARBEITEN_PX } from "../konstanten.js";
 
 /** Stil der Karte; c ist die Konfiguration, f deren Farben. */
 export function karteStil(c, f) {
@@ -68,6 +68,25 @@ export function karteStil(c, f) {
           background: var(--primary-text-color); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55);
           border-radius: 1px; pointer-events: none;
         }
+        .tp-hover {
+          position: absolute; top: 0; bottom: 0; width: 1px;
+          background: var(--secondary-text-color); opacity: 0.8; pointer-events: none;
+        }
+        /* Unter dem Plan, damit er nicht am Kartenrand klebt und die Kurve frei bleibt. */
+        .tp-hinweis {
+          position: absolute; top: calc(100% + 8px); z-index: 5;
+          display: grid; grid-template-columns: auto auto; column-gap: 14px; row-gap: 2px;
+          padding: 7px 10px; border-radius: 8px; border: 1px solid var(--divider-color);
+          background: var(--card-background-color, #1c1c1c); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+          font-size: 0.82rem; line-height: 1.3; white-space: nowrap; pointer-events: none;
+          font-variant-numeric: tabular-nums;
+        }
+        .tp-hinweis .hw-zeit { grid-column: 1 / -1; font-weight: 600; margin-bottom: 2px; }
+        .tp-hinweis .hw-name { color: var(--secondary-text-color); }
+        .tp-hinweis .hw-wert { text-align: right; }
+        .tp-hinweis .hw-aktion { grid-column: 1 / -1; margin-top: 2px; color: var(--secondary-text-color); }
+        .tp-hinweis .hw-aktion.heating { color: ${f.status_heating}; }
+        .tp-hover[hidden], .tp-hinweis[hidden] { display: none; }
 
         .trackwrap { position: relative; transition: transform 120ms ease; }
         .trackwrap.haelt { transform: scale(0.98); }

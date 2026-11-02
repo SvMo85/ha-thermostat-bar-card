@@ -1,7 +1,8 @@
-import { dunkler, heizflaecheVerlauf } from "../farben.js";
+﻿import { dunkler, heizflaecheVerlauf } from "../farben.js";
 import { BedienungTeil } from "./bedienung.js";
 import { karteStil } from "./stil.js";
 import { BESCHRIFTUNGSLUECKE_PX, GREIFPUNKT_RADIUS_PX, KARTEN_VORGABEN, MODUS_SYMBOLE, STANDARDFARBEN, TAGESPLAN_VORGABEN, UHR_TAKT_MS } from "../konstanten.js";
+import { TagesplanHinweisTeil } from "../tagesplan/hinweis.js";
 import { TagesplanTeil } from "../tagesplan/zeichnung.js";
 import { teileEinbauen } from "../teile.js";
 
@@ -231,6 +232,8 @@ export class ThermostatBarCard extends HTMLElement {
               <div class="haltefortschritt"></div>
             </div>
             <div class="tp-jetzt"></div>
+            <div class="tp-hover" hidden></div>
+            <div class="tp-hinweis" hidden></div>
           </div>
           <div class="modes"></div>
         </div>
@@ -254,6 +257,7 @@ export class ThermostatBarCard extends HTMLElement {
     // Tagesplan oeffnet das Heizprofil.
     this._haltenBinden(this._anzeigeLeiste.wrap, this._anzeigeLeiste.fortschritt, () => this._editOeffnen());
     this._haltenBinden(this._el.plan, this._el.plan.querySelector(".haltefortschritt"), () => this._profilOeffnen());
+    this._hinweisBinden(this._el.plan);
     this._modiBauen();
 
     if (this._el.lock) {
@@ -489,4 +493,4 @@ export class ThermostatBarCard extends HTMLElement {
   }
 }
 
-teileEinbauen(ThermostatBarCard, TagesplanTeil, BedienungTeil);
+teileEinbauen(ThermostatBarCard, TagesplanTeil, TagesplanHinweisTeil, BedienungTeil);
