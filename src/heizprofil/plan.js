@@ -10,6 +10,7 @@ export const PROFIL_RASTER_MIN = 5;
 export const PROFIL_MAX_SCHALTPUNKTE = 13;
 export const PROFIL_NEU_DAUER_MIN = 60;
 export const PROFIL_MELDUNG_MS = 2500;
+export const PROFIL_TAGESZEILE_PX = 43;
 
 export const kopie = (wert) => JSON.parse(JSON.stringify(wert));
 export const minutenAus = (text) => {

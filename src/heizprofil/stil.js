@@ -1,4 +1,4 @@
-/** Stil des Heizprofil-Blatts; f sind die Farben der Karte. */
+﻿/** Stil des Heizprofil-Blatts; f sind die Farben der Karte. */
 export function blattStil(f) {
   return `
       <style>
@@ -61,7 +61,7 @@ export function blattStil(f) {
         .wochentag .name { font-size: 0.9rem; position: relative; padding-right: 10px; }
         .wochentag.heute .name { color: var(--primary-color); font-weight: 500; }
         .wochentag.aktuell { background: var(--spur); padding-left: 4px; margin-left: -4px; }
-        .wochentag .tag { height: 34px; border-radius: 7px; }
+        .wochentag .tag { border-radius: 7px; }
         .wochentag ha-icon { color: var(--secondary-text-color); --mdc-icon-size: 20px; }
         .wochentag ha-icon.an { color: var(--primary-color); }
         .wochentag.quelle { opacity: 0.55; }

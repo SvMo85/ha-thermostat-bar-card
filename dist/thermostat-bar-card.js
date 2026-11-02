@@ -244,6 +244,7 @@ var PROFIL_RASTER_MIN = 5;
 var PROFIL_MAX_SCHALTPUNKTE = 13;
 var PROFIL_NEU_DAUER_MIN = 60;
 var PROFIL_MELDUNG_MS = 2500;
+var PROFIL_TAGESZEILE_PX = 43;
 var kopie = (wert) => JSON.parse(JSON.stringify(wert));
 var minutenAus = (text) => {
   const [h, m] = String(text).split(":").map(Number);
@@ -359,7 +360,7 @@ function blattStil(f) {
         .wochentag .name { font-size: 0.9rem; position: relative; padding-right: 10px; }
         .wochentag.heute .name { color: var(--primary-color); font-weight: 500; }
         .wochentag.aktuell { background: var(--spur); padding-left: 4px; margin-left: -4px; }
-        .wochentag .tag { height: 34px; border-radius: 7px; }
+        .wochentag .tag { border-radius: 7px; }
         .wochentag ha-icon { color: var(--secondary-text-color); --mdc-icon-size: 20px; }
         .wochentag ha-icon.an { color: var(--primary-color); }
         .wochentag.quelle { opacity: 0.55; }
@@ -453,8 +454,9 @@ var ThermostatHeizprofilBlatt = class extends HTMLElement {
   get _woche() {
     return this._z.wochen[this._z.profil];
   }
-  _planVon(tagName) {
-    return this._woche && this._woche[tagName];
+  _planVon(tagName, profil = this._z.profil) {
+    const woche = this._z.wochen[profil];
+    return woche && woche[tagName];
   }
   get _geaenderteTage() {
     return this._z.geaendert[this._z.profil];
@@ -551,14 +553,27 @@ var ThermostatHeizprofilBlatt = class extends HTMLElement {
   _neuerZeitraum(tag) {
     return neuerZeitraum(tag, this._grenzen.max);
   }
+  /** Kopierziele als "P2|MONDAY", damit ueber mehrere Profile gewaehlt werden kann. */
+  _kopierziel(profil, tagName) {
+    return `${profil}|${tagName}`;
+  }
+  _istQuelle(profil, tagName) {
+    return profil === this._z.profil && tagName === this._z.tag;
+  }
   _kopierenAusfuehren() {
     const quelle = this._planVon(this._z.tag);
-    this._z.kopierziele.forEach((t) => {
-      this._woche[t] = kopie(quelle);
-      this._geaenderteTage.add(t);
+    const teile = [];
+    this._profile.forEach((profil) => {
+      const tage = WOCHENTAGE.filter((t) => this._z.kopierziele.has(this._kopierziel(profil, t)));
+      if (!tage.length || !this._z.wochen[profil]) return;
+      tage.forEach((t) => {
+        this._z.wochen[profil][t] = kopie(quelle);
+        this._z.geaendert[profil].add(t);
+      });
+      const namen = tage.map((t) => this._tagKurz(t)).join(", ");
+      teile.push(this._profile.length > 1 ? `${profil} ${namen}` : namen);
     });
-    const ziele = WOCHENTAGE.filter((t) => this._z.kopierziele.has(t)).map((t) => this._tagKurz(t)).join(", ");
-    this._melden(`${this._tagLang(this._z.tag)} auf ${ziele} kopiert. Noch nicht gespeichert.`);
+    this._melden(`${this._tagLang(this._z.tag)} auf ${teile.join("; ")} kopiert. Noch nicht gespeichert.`);
     this._z.kopierziele = /* @__PURE__ */ new Set();
     this._z.ansicht = "tag";
   }
@@ -606,16 +621,16 @@ var ThermostatHeizprofilBlatt = class extends HTMLElement {
     const anteil = spanne > 0 ? Math.min(1, Math.max(0, (t - Number(s.min_temp)) / spanne)) : 0;
     return `color-mix(in oklab, ${cssFarbe(s.max_color)} ${Math.round(anteil * 100)}%, ${cssFarbe(s.min_color)})`;
   }
-  _skala() {
-    const werte = WOCHENTAGE.map((t) => this._planVon(t)).filter(Boolean).flatMap((t) => [Number(t.base_temperature), ...t.periods.map((p) => Number(p.temperature))]);
+  _skala(profil) {
+    const werte = WOCHENTAGE.map((t) => this._planVon(t, profil)).filter(Boolean).flatMap((t) => [Number(t.base_temperature), ...t.periods.map((p) => Number(p.temperature))]);
     if (!werte.length) return { unten: 15, oben: 25 };
     return { unten: Math.min(...werte) - 1, oben: Math.max(...werte) + 1 };
   }
   /** Tageskurve als Stufen; viewBox 1440 mal 100, gedehnt auf die Breite. */
-  _kurveSvg(tagName, mitAuswahl) {
-    const { unten, oben } = this._skala();
+  _kurveSvg(tagName, mitAuswahl, profil) {
+    const { unten, oben } = this._skala(profil);
     const y = (t) => 100 - (t - unten) / (oben - unten) * 100;
-    const teile = zeitraumAbschnitte(this._planVon(tagName));
+    const teile = zeitraumAbschnitte(this._planVon(tagName, profil));
     const strich = 'vector-effect="non-scaling-stroke"';
     const marken = [360, 720, 1080].map((m) => `<line x1="${m}" y1="0" x2="${m}" y2="100" stroke="var(--divider-color)" stroke-width="1" ${strich}/>`).join("");
     const flaechen = teile.map((a) => {
@@ -637,8 +652,8 @@ var ThermostatHeizprofilBlatt = class extends HTMLElement {
     return zeitraumAbschnitte(this._planVon(tagName)).filter((a) => a.bis - a.von >= 90).map((a) => `<span class="wert" style="left: ${(a.von + a.bis) / 2 / TAGESMINUTEN * 100}%;
         top: ${100 - (a.temp - unten) / (oben - unten) * 100}%">${this._grad(a.temp)}</span>`).join("");
   }
-  _tagHtml(tagName, hoehe, gross) {
-    return `<div class="tag" style="height: ${hoehe}px">${this._kurveSvg(tagName, gross)}${gross ? this._werteHtml(tagName) : ""}</div>`;
+  _tagHtml(tagName, hoehe, gross, profil) {
+    return `<div class="tag" style="height: ${hoehe}px">${this._kurveSvg(tagName, gross, profil)}${gross ? this._werteHtml(tagName) : ""}</div>`;
   }
   get _zeitachse() {
     return '<div class="zeitachse"><span>0</span><span>6</span><span>12</span><span>18</span><span>24</span></div>';
@@ -728,40 +743,63 @@ var ThermostatHeizprofilBlatt = class extends HTMLElement {
       inhalt: `${this._profileHtml()}${this._profilZustandHtml() || `<div class="woche">${WOCHENTAGE.map((t) => `
         <button type="button" class="wochentag ${t === this._heute ? "heute" : ""} ${t === this._z.tag ? "aktuell" : ""}
           ${this._geaenderteTage.has(t) ? "geaendert" : ""}" data-oeffne="${t}">
-          <span class="name">${this._tagKurz(t)}</span>${this._tagHtml(t, 34, false)}<ha-icon icon="mdi:chevron-right"></ha-icon>
+          <span class="name">${this._tagKurz(t)}</span>${this._tagHtml(t, PROFIL_TAGESZEILE_PX, false)}<ha-icon icon="mdi:chevron-right"></ha-icon>
         </button>`).join("")}</div>${this._zeitachseEingerueckt}`}`,
       fuss: this._speichernHtml
     };
   }
-  _kopierAnsicht() {
-    const ziele = this._z.kopierziele;
+  /** Zielprofil der Kopieransicht; der Punkt markiert Profile, in denen Tage gewaehlt sind. */
+  _zielprofileHtml() {
+    if (this._profile.length < 2) return "";
+    const ziel = this._z.kopierProfil;
+    return `<div class="chips">${this._profile.map((p) => {
+      const gewaehlt = WOCHENTAGE.some((t) => this._z.kopierziele.has(this._kopierziel(p, t)));
+      return `<button type="button" data-zielprofil="${p}" class="${gewaehlt ? "geaendert" : ""}"
+        aria-pressed="${p === ziel}">${p}</button>`;
+    }).join("")}</div>`;
+  }
+  _kopierzieleHtml() {
+    const ziel = this._z.kopierProfil;
+    if (this._z.laedt.has(ziel)) return `<p class="hinweis">Profil ${ziel} wird vom Gerät geladen …</p>`;
+    if (this._z.fehler[ziel]) {
+      return `<p class="hinweis fehler">Profil ${ziel} konnte nicht geladen werden: ${htmlSicher(this._z.fehler[ziel])}</p>
+        <button type="button" class="hinzu" data-aktion="ziel-neu-laden">Erneut laden</button>`;
+    }
+    if (!this._z.wochen[ziel]) return `<p class="hinweis">Kein Plan vorhanden.</p>`;
     const auswahl = (tage, text) => `<button type="button" data-auswahl="${tage.join(",")}">${text}</button>`;
+    return `
+      <div class="schnellwahl">
+        ${auswahl(WERKTAGE, `${this._tagKurz("MONDAY")} bis ${this._tagKurz("FRIDAY")}`)}
+        ${auswahl(WOCHENENDE, `${this._tagKurz("SATURDAY")} und ${this._tagKurz("SUNDAY")}`)}
+        ${auswahl(WOCHENTAGE, "Alle")}
+      </div>
+      <div class="woche">${WOCHENTAGE.map((t) => {
+      const quelle = this._istQuelle(ziel, t);
+      const an = this._z.kopierziele.has(this._kopierziel(ziel, t));
+      const symbol = quelle ? "mdi:content-copy" : an ? "mdi:checkbox-marked" : "mdi:checkbox-blank-outline";
+      return `<button type="button" class="wochentag ${quelle ? "quelle" : ""}" data-ziel="${t}" ${quelle ? "disabled" : ""}
+          role="checkbox" aria-checked="${an}">
+          <span class="name">${this._tagKurz(t)}</span>${this._tagHtml(t, PROFIL_TAGESZEILE_PX, false, ziel)}
+          <ha-icon icon="${symbol}" class="${an ? "an" : ""}"></ha-icon>
+        </button>`;
+    }).join("")}</div>${this._zeitachseEingerueckt}`;
+  }
+  _kopierAnsicht() {
+    const anzahl = this._z.kopierziele.size;
+    const quelle = this._profile.length > 1 ? `${this._z.profil} ${this._tagLang(this._z.tag)}` : this._tagLang(this._z.tag);
     return {
-      titel: `${this._tagLang(this._z.tag)} kopieren`,
+      titel: `${quelle} kopieren`,
       zurueck: true,
       inhalt: `
         <div class="titel"><span>Quelle</span></div>
         ${this._tagHtml(this._z.tag, 60, false)}
         <div class="titel"><span>Auf diese Tage</span></div>
-        <div class="schnellwahl">
-          ${auswahl(WERKTAGE, `${this._tagKurz("MONDAY")} bis ${this._tagKurz("FRIDAY")}`)}
-          ${auswahl(WOCHENENDE, `${this._tagKurz("SATURDAY")} und ${this._tagKurz("SUNDAY")}`)}
-          ${auswahl(WOCHENTAGE, "Alle")}
-        </div>
-        <div class="woche">${WOCHENTAGE.map((t) => {
-        const quelle = t === this._z.tag;
-        const an = ziele.has(t);
-        const symbol = quelle ? "mdi:content-copy" : an ? "mdi:checkbox-marked" : "mdi:checkbox-blank-outline";
-        return `<button type="button" class="wochentag ${quelle ? "quelle" : ""}" data-ziel="${t}" ${quelle ? "disabled" : ""}
-            role="checkbox" aria-checked="${an}">
-            <span class="name">${this._tagKurz(t)}</span>${this._tagHtml(t, 34, false)}
-            <ha-icon icon="${symbol}" class="${an ? "an" : ""}"></ha-icon>
-          </button>`;
-      }).join("")}</div>${this._zeitachseEingerueckt}
+        ${this._zielprofileHtml()}
+        ${this._kopierzieleHtml()}
         <p class="hinweis">Der Plan der gewählten Tage wird ersetzt, auch die Grundtemperatur.</p>`,
       fuss: `<button type="button" data-aktion="zurueck">Abbrechen</button>
-        <button type="button" class="haupt" data-aktion="kopieren-ausfuehren" ${ziele.size ? "" : "disabled"}>
-          ${ziele.size ? `Auf ${ziele.size} ${ziele.size === 1 ? "Tag" : "Tage"} kopieren` : "Tage wählen"}</button>`
+        <button type="button" class="haupt" data-aktion="kopieren-ausfuehren" ${anzahl ? "" : "disabled"}>
+          ${anzahl ? `Auf ${anzahl} ${anzahl === 1 ? "Tag" : "Tage"} kopieren` : "Tage wählen"}</button>`
     };
   }
   _zeichnen() {
@@ -844,13 +882,17 @@ var ThermostatHeizprofilBlatt = class extends HTMLElement {
       z.tag = d.oeffne;
       z.ansicht = "tag";
       z.gewaehlt = null;
+    } else if (d.zielprofil) {
+      z.kopierProfil = d.zielprofil;
+      if (!z.wochen[d.zielprofil]) this._profilLaden(d.zielprofil);
     } else if (d.ziel) {
-      if (z.kopierziele.has(d.ziel)) z.kopierziele.delete(d.ziel);
-      else z.kopierziele.add(d.ziel);
+      const schluessel = this._kopierziel(z.kopierProfil, d.ziel);
+      if (z.kopierziele.has(schluessel)) z.kopierziele.delete(schluessel);
+      else z.kopierziele.add(schluessel);
     } else if (d.auswahl) {
-      const tage = d.auswahl.split(",").filter((t) => t !== z.tag);
-      const alleAn = tage.every((t) => z.kopierziele.has(t));
-      tage.forEach((t) => alleAn ? z.kopierziele.delete(t) : z.kopierziele.add(t));
+      const schluessel = d.auswahl.split(",").filter((t) => !this._istQuelle(z.kopierProfil, t)).map((t) => this._kopierziel(z.kopierProfil, t));
+      const alleAn = schluessel.every((s) => z.kopierziele.has(s));
+      schluessel.forEach((s) => alleAn ? z.kopierziele.delete(s) : z.kopierziele.add(s));
     } else if (d.aktion === "hinzufuegen") {
       const tag = this._planVon(z.tag);
       tag.periods.push(this._neuerZeitraum(tag));
@@ -864,10 +906,12 @@ var ThermostatHeizprofilBlatt = class extends HTMLElement {
     else if (d.aktion === "woche") z.ansicht = "woche";
     else if (d.aktion === "kopieren") {
       z.kopierziele = /* @__PURE__ */ new Set();
+      z.kopierProfil = z.profil;
       z.ansicht = "kopieren";
     } else if (d.aktion === "kopieren-ausfuehren") this._kopierenAusfuehren();
     else if (d.aktion === "zurueck") z.ansicht = "tag";
     else if (d.aktion === "neu-laden") this._profilLaden(z.profil);
+    else if (d.aktion === "ziel-neu-laden") this._profilLaden(z.kopierProfil);
     else if (d.aktion === "speichern") {
       this._speichern();
       return;
