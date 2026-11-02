@@ -58,6 +58,10 @@ const TAGESPLAN_VORGABEN = {
   min_color: "primary",
   max_color: "red",
   show_history: true,
+  // Bewusst dumpf und fast grau: der Verlauf ergaenzt die Planlinie, er
+  // darf ihr nicht die Aufmerksamkeit nehmen.
+  history_heating_color: "#b46058",
+  history_idle_color: "#5e92ac",
   history_color: "secondary-text"
 };
 
@@ -177,6 +181,25 @@ function tagesabschnitte(tagesplan) {
     abschnitte.push({ von: position, bis: TAGESMINUTEN, temp: basis });
   }
   return abschnitte;
+}
+
+/**
+ * Teilt die Punkte des Verlaufs an jedem Farbwechsel. Jeder Abschnitt endet
+ * auf dem ersten Punkt des naechsten, damit die Linie durchgehend bleibt.
+ */
+function verlaufsabschnitte(punkte, farbeVon) {
+  const abschnitte = [];
+  punkte.forEach((p) => {
+    const farbe = farbeVon(p);
+    const letzter = abschnitte[abschnitte.length - 1];
+    if (letzter && letzter.farbe === farbe) {
+      letzter.punkte.push(p);
+      return;
+    }
+    if (letzter) letzter.punkte.push(p);
+    abschnitte.push({ farbe, punkte: [p] });
+  });
+  return abschnitte.filter((a) => a.punkte.length >= 2);
 }
 
 /** Alle Temperaturen der Woche, fuer eine Hoehenskala, die nicht taeglich springt. */
@@ -1080,27 +1103,41 @@ class ThermostatBarCard extends HTMLElement {
   /**
    * Gemessene Ist-Temperatur von 0 Uhr bis jetzt, gedaempft und gestrichelt,
    * damit die Planlinie fuehrend bleibt. Endet am aktuellen Ist-Wert.
+   * Meldet das Geraet hvac_action, ist die Linie dort rot, wo geheizt wurde,
+   * und blau, wo nicht; sonst hat sie durchgehend history_color.
    */
   _verlaufSvg(minute, x, y) {
     const tagesbeginn = Date.now() - minute * 60000;
     const punkte = this._verlauf
-      .map((p) => ({ m: Math.max(0, (p.zeit - tagesbeginn) / 60000), t: p.t }))
+      .map((p) => ({ m: Math.max(0, (p.zeit - tagesbeginn) / 60000), t: p.t, aktion: p.aktion }))
       .filter((p) => p.m <= minute);
-    if (this._ist !== null) punkte.push({ m: minute, t: this._ist });
+    if (this._ist !== null) {
+      punkte.push({ m: minute, t: this._ist, aktion: this._zustand.attributes.hvac_action });
+    }
     if (punkte.length < 2) return "";
 
     const geglaettet = punkte.map((p, i) => {
       const fenster = punkte.slice(Math.max(0, i - 3), i + 4);
-      return { m: p.m, t: fenster.reduce((summe, q) => summe + q.t, 0) / fenster.length };
+      return { ...p, t: fenster.reduce((summe, q) => summe + q.t, 0) / fenster.length };
     });
     geglaettet[geglaettet.length - 1] = punkte[punkte.length - 1];
 
-    const d = geglaettet
+    const s = this._config.schedule;
+    const mitAktion = geglaettet.some((p) => p.aktion !== undefined && p.aktion !== null);
+    const farbeVon = (p) => !mitAktion ? s.history_color
+      : p.aktion === "heating" ? s.history_heating_color : s.history_idle_color;
+    return verlaufsabschnitte(geglaettet, farbeVon)
+      .map((abschnitt) => this._verlaufPfad(abschnitt.punkte, abschnitt.farbe, x, y))
+      .join("");
+  }
+
+  _verlaufPfad(punkte, farbe, x, y) {
+    const d = punkte
       .map((p, i) => `${i === 0 ? "M" : "L"} ${x(p.m)} ${y(p.t)}`)
       .join(" ");
-    const farbe = `color-mix(in oklab, ${cssFarbe(this._config.schedule.history_color)} ` +
+    const strich = `color-mix(in oklab, ${cssFarbe(farbe)} ` +
       `${VERLAUF_FARBSTAERKE_PROZENT}%, var(--card-background-color, #1c1c1c))`;
-    return `<path d="${d}" fill="none" style="stroke: ${farbe}" stroke-width="${VERLAUF_LINIE_PX}"` +
+    return `<path d="${d}" fill="none" style="stroke: ${strich}" stroke-width="${VERLAUF_LINIE_PX}"` +
       ` stroke-dasharray="4 3" stroke-linejoin="round" stroke-linecap="round"/>`;
   }
 
@@ -1136,7 +1173,8 @@ class ThermostatBarCard extends HTMLElement {
       this._verlauf = ((antwort && antwort[entitaet]) || [])
         .map((eintrag) => ({
           zeit: Number(eintrag.lu) * 1000,
-          t: Number(eintrag.a && eintrag.a.current_temperature)
+          t: Number(eintrag.a && eintrag.a.current_temperature),
+          aktion: eintrag.a ? eintrag.a.hvac_action : undefined
         }))
         .filter((p) => Number.isFinite(p.zeit) && Number.isFinite(p.t))
         .sort((a, b) => a.zeit - b.zeit);
@@ -1380,6 +1418,14 @@ const EDITOR_SCHEMA = [
         ]
       },
       { name: "show_history", selector: { boolean: {} } },
+      {
+        type: "grid",
+        name: "",
+        schema: [
+          { name: "history_heating_color", selector: { ui_color: {} } },
+          { name: "history_idle_color", selector: { ui_color: {} } }
+        ]
+      },
       { name: "history_color", selector: { ui_color: {} } }
     ]
   },
@@ -1413,7 +1459,9 @@ const EDITOR_BESCHRIFTUNGEN = {
   min_color: "Farbe Skalenanfang",
   max_color: "Farbe Skalenende",
   show_history: "Gemessenen Verlauf zeigen",
-  history_color: "Farbe Verlauf"
+  history_heating_color: "Verlauf beim Heizen",
+  history_idle_color: "Verlauf ohne Heizen",
+  history_color: "Verlauf ohne Heizmeldung"
 };
 
 // Was der Editor anzeigt, wenn ein Schluessel nicht im YAML steht. Ohne diese

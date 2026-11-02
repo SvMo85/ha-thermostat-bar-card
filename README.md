@@ -113,7 +113,7 @@ Ohne `label` nimmt die Karte die Übersetzung von Home Assistant und folgt damit
 Über der Leiste zeigt die Karte auf Wunsch den heutigen Tagesplan des Heizprofils als Kurve: Die Höhe zeigt die Temperatur, ein senkrechter Strich die aktuelle Uhrzeit, feine Marken alle vier Stunden. Dazu kommen:
 
 - **Abweichungen vom Plan** als gestrichelte Linie mit Beschriftung. Im Automatikbetrieb endet eine manuell gesetzte Temperatur am nächsten Schaltpunkt, weil Homematic IP dann ins Profil zurückkehrt. Heizen und Aus gelten bis zum Tagesende.
-- **Der gemessene Verlauf** der Ist-Temperatur von 0 Uhr bis jetzt, aus dem Verlauf von Home Assistant.
+- **Der gemessene Verlauf** der Ist-Temperatur von 0 Uhr bis jetzt, aus dem Verlauf von Home Assistant. Wo das Gerät laut `hvac_action` geheizt hat, ist die Linie rötlich, sonst bläulich.
 
 Der Plan stammt aus dem Attribut `schedule_data`, das die Integration [Homematic(IP) Local](https://github.com/SukramJ/homematicip_local) an jeder Klima-Entität bereitstellt. Fehlt das Attribut, blendet die Karte den Tagesplan aus.
 
@@ -125,6 +125,8 @@ schedule:
   min_color: primary
   max_color: red
   show_history: true
+  history_heating_color: "#b46058"
+  history_idle_color: "#5e92ac"
   history_color: secondary-text
 ```
 
@@ -136,7 +138,9 @@ schedule:
 | `min_color` | `primary` | Farbe am unteren Ende der Farbskala |
 | `max_color` | `red` | Farbe am oberen Ende der Farbskala |
 | `show_history` | `true` | Gemessenen Verlauf bis jetzt zeigen |
-| `history_color` | `secondary-text` | Farbe des Verlaufs, gedämpft gezeichnet |
+| `history_heating_color` | `#b46058` | Verlauf, solange geheizt wurde, gedämpft gezeichnet |
+| `history_idle_color` | `#5e92ac` | Verlauf, solange nicht geheizt wurde, gedämpft gezeichnet |
+| `history_color` | `secondary-text` | Verlauf bei Geräten, die kein `hvac_action` melden |
 
 `min_temp` und `max_temp` bestimmen nur die **Farben**: Dieselbe Temperatur hat damit auf jeder Karte dieselbe Farbe, dazwischen wird gemischt. Die **Höhe** der Kurve rechnet die Karte selbst aus: unten der kleinste Wert der Wochenpläne, oben der größte oder ein höherer Sollwert, mit je 0,5 °C Luft.
 
