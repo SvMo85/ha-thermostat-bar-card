@@ -19,7 +19,7 @@
  * Schaltzeitpunkt des Heizprofils bei; das ist gewolltes Verhalten.
  */
 
-const CARD_VERSION = "0.3.0";
+const CARD_VERSION = "0.3.1";
 
 console.info(
   `%c THERMOSTAT-BAR-CARD %c ${CARD_VERSION} `,
