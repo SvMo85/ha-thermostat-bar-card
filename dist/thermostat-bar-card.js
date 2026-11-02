@@ -263,6 +263,7 @@ class ThermostatBarCard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
+    if (this._profilBlatt && this._profilBlatt.isConnected) this._profilBlatt.hass = hass;
     if (!this._config) return;
     this._zeichnen();
     this._verlaufBeiBedarfLaden();
@@ -456,7 +457,14 @@ class ThermostatBarCard extends HTMLElement {
 
         /* Volle Kartenbreite wie die Knoepfe: der Randbereich der Leiste
            existiert nur fuer deren Beschriftungen. */
-        .tagesplan { position: relative; height: ${c.height}px; }
+        .tagesplan {
+          position: relative; height: ${c.height}px;
+          cursor: pointer; transition: transform 120ms ease;
+        }
+        .tagesplan.haelt { transform: scale(0.98); }
+        .tagesplan.haelt .haltefortschritt { opacity: 1; }
+        .tagesplan:focus-visible { outline: none; }
+        .tagesplan:focus-visible .tp-clip { outline: 2px solid ${f.target}; outline-offset: 2px; }
         .tp-clip {
           position: absolute; inset: 0; border-radius: 8px; overflow: hidden;
           background: ${f.track};
@@ -675,10 +683,11 @@ class ThermostatBarCard extends HTMLElement {
           ${c.show_status ? '<span class="status"><ha-icon></ha-icon><span class="stext"></span></span>' : ""}
         </div>
         <div class="instrument">
-          <div class="tagesplan" aria-hidden="true">
+          <div class="tagesplan" role="button" tabindex="0" aria-label="Heizprofil bearbeiten">
             <div class="tp-clip">
               <div class="tp-marken"></div>
               <svg class="tp-kurve"></svg>
+              <div class="haltefortschritt"></div>
             </div>
             <div class="tp-jetzt"></div>
           </div>
@@ -700,7 +709,10 @@ class ThermostatBarCard extends HTMLElement {
     this._anzeigeLeiste = this._leisteErzeugen(this._config.edge_space, false);
     this._el.instrument.insertBefore(this._anzeigeLeiste.wrap, this._el.modes);
 
-    this._haltenBinden(this._anzeigeLeiste.wrap);
+    // Halten auf der Leiste stellt die Temperatur ein, Halten auf dem
+    // Tagesplan oeffnet das Heizprofil.
+    this._haltenBinden(this._anzeigeLeiste.wrap, this._anzeigeLeiste.fortschritt, () => this._editOeffnen());
+    this._haltenBinden(this._el.plan, this._el.plan.querySelector(".haltefortschritt"), () => this._profilOeffnen());
     this._modiBauen();
 
     if (this._el.lock) {
@@ -1193,17 +1205,18 @@ class ThermostatBarCard extends HTMLElement {
    * Die Anzeigeleiste reagiert nur auf langes Halten. Jede Bewegung bricht ab,
    * damit senkrechtes Scrollen ueber der Karte nie etwas verstellt.
    */
-  _haltenBinden(wrap) {
+  _haltenBinden(wrap, fortschritt, oeffnen) {
     wrap.addEventListener("pointerdown", (ereignis) => {
       if (this._editBox) return;
       this._startX = ereignis.clientX;
       this._startY = ereignis.clientY;
       this._haltenAbbrechen();
+      this._halteZiel = { wrap, fortschritt };
       this._fortschrittStarten();
       this._haltenTimer = setTimeout(() => {
         this._haltenTimer = null;
         this._fortschrittZuruecksetzen();
-        this._editOeffnen();
+        oeffnen();
       }, HALTEDAUER_MS);
     });
 
@@ -1223,7 +1236,7 @@ class ThermostatBarCard extends HTMLElement {
 
     wrap.addEventListener("keydown", (ereignis) => {
       if (ereignis.key === "Enter" || ereignis.key === " ") {
-        this._editOeffnen();
+        oeffnen();
         ereignis.preventDefault();
       }
     });
@@ -1239,22 +1252,38 @@ class ThermostatBarCard extends HTMLElement {
 
   /** Macht sichtbar, dass laenger gehalten werden muss. */
   _fortschrittStarten() {
-    if (!this._anzeigeLeiste) return;
-    const balken = this._anzeigeLeiste.fortschritt;
+    if (!this._halteZiel) return;
+    const balken = this._halteZiel.fortschritt;
     balken.style.transition = "none";
     balken.style.width = "0";
     void balken.offsetWidth; // Neuberechnung erzwingen, sonst startet die Animation nicht
     balken.style.transition = `width ${HALTEDAUER_MS}ms linear`;
     balken.style.width = "100%";
-    this._anzeigeLeiste.wrap.classList.add("haelt");
+    this._halteZiel.wrap.classList.add("haelt");
   }
 
   _fortschrittZuruecksetzen() {
-    if (!this._anzeigeLeiste) return;
-    const balken = this._anzeigeLeiste.fortschritt;
+    if (!this._halteZiel) return;
+    const balken = this._halteZiel.fortschritt;
     balken.style.transition = "width 140ms ease";
     balken.style.width = "0";
-    this._anzeigeLeiste.wrap.classList.remove("haelt");
+    this._halteZiel.wrap.classList.remove("haelt");
+  }
+
+  // -------------------------------------------------------------- Heizprofil
+
+  _profilOeffnen() {
+    if (!this._tagesplanSichtbar) return;
+    const blatt = document.createElement("thermostat-bar-card-heizprofil");
+    blatt.oeffnen({
+      hass: this._hass,
+      entity: this._config.entity,
+      name: this._config.name || this._zustand.attributes.friendly_name || this._config.entity,
+      heute: this._jetzt().tag,
+      farbskala: this._config.schedule,
+      farben: this._config.colors
+    });
+    this._profilBlatt = blatt;
   }
 
   // --------------------------------------------------------- Bearbeitungsmodus
@@ -1365,11 +1394,727 @@ class ThermostatBarCard extends HTMLElement {
   disconnectedCallback() {
     this._haltenAbbrechen();
     this._editSchliessen();
+    if (this._profilBlatt) this._profilBlatt.schliessen();
     clearTimeout(this._freigabeTimer);
     clearInterval(this._uhr);
     if (this._beobachter) {
       this._beobachter.disconnect();
       this._beobachter = null;
+    }
+  }
+}
+
+// --------------------------------------------------------------- Heizprofil
+
+const WOCHENTAGE = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"];
+const WERKTAGE = WOCHENTAGE.slice(0, 5);
+const WOCHENENDE = WOCHENTAGE.slice(5);
+
+// Belegt: OpenCCU rundet Uhrzeiten auf 5 Minuten; aiohomematic schreibt je
+// Tag 13 Schaltpunkte.
+const PROFIL_RASTER_MIN = 5;
+const PROFIL_MAX_SCHALTPUNKTE = 13;
+const PROFIL_NEU_DAUER_MIN = 60;
+const PROFIL_MELDUNG_MS = 2500;
+
+const kopie = (wert) => JSON.parse(JSON.stringify(wert));
+const minutenAus = (text) => {
+  const [h, m] = String(text).split(":").map(Number);
+  return h * 60 + m;
+};
+const uhrzeitAus = (min) => `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
+const htmlSicher = (text) => String(text).replace(/[&<>"]/g, (z) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[z]);
+
+/** Lueckenlose Abschnitte 0 bis 1440; Luecken tragen die Grundtemperatur und index null. */
+function zeitraumAbschnitte(tag) {
+  const liste = [];
+  let position = 0;
+  (tag.periods || [])
+    .map((p, index) => ({ von: minutenAus(p.starttime), bis: minutenAus(p.endtime), temp: Number(p.temperature), index }))
+    .sort((a, b) => a.von - b.von)
+    .forEach((p) => {
+      if (p.von > position) liste.push({ von: position, bis: p.von, temp: Number(tag.base_temperature), index: null });
+      liste.push(p);
+      position = p.bis;
+    });
+  if (position < TAGESMINUTEN) {
+    liste.push({ von: position, bis: TAGESMINUTEN, temp: Number(tag.base_temperature), index: null });
+  }
+  return liste;
+}
+
+/**
+ * So belegt aiohomematic die Schaltpunkte: jeder Zeitraum einen, jede Luecke
+ * davor oder dazwischen einen, ein Rest bis 24:00 noch einen.
+ */
+const schaltpunkteVon = (tag) => zeitraumAbschnitte(tag).length;
+
+/**
+ * Bearbeitet die Wochenplaene eines Thermostats von Homematic(IP) Local als
+ * Blatt ueber dem Dashboard. Haengt am body, damit kein Elternelement der
+ * Karte es beschneidet. Gelesen wird ueber get_schedule_profile, geschrieben
+ * je geaendertem Tag ueber set_schedule_weekday.
+ */
+class ThermostatHeizprofilBlatt extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" });
+  }
+
+  oeffnen({ hass, entity, name, heute, farbskala, farben }) {
+    this._hass = hass;
+    this._entity = entity;
+    this._name = name;
+    this._heute = heute;
+    this._farbskala = farbskala;
+    this._farben = farben;
+    const a = this._zustand.attributes;
+    const aktiv = a.current_schedule_profile || "P1";
+    this._profile = [...(a.available_profiles && a.available_profiles.length ? a.available_profiles : [aktiv])].sort();
+    this._aktivesProfil = aktiv;
+    this._z = {
+      ansicht: "tag", profil: aktiv, tag: heute, gewaehlt: null, kopierziele: new Set(),
+      wochen: { [aktiv]: a.schedule_data ? kopie(a.schedule_data) : null },
+      geaendert: Object.fromEntries(this._profile.map((p) => [p, new Set()])),
+      laedt: new Set(), fehler: {}, speichert: false, meldung: ""
+    };
+    this._aufbauen();
+    document.body.appendChild(this);
+    this._zeichnen();
+    if (!this._z.wochen[aktiv]) this._profilLaden(aktiv);
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+  }
+
+  schliessen() {
+    clearTimeout(this._meldungTimer);
+    document.removeEventListener("keydown", this._tasteGedrueckt);
+    this.remove();
+  }
+
+  get _zustand() {
+    return this._hass.states[this._entity];
+  }
+
+  // ------------------------------------------------------------ Daten
+
+  get _woche() {
+    return this._z.wochen[this._z.profil];
+  }
+
+  _planVon(tagName) {
+    return this._woche && this._woche[tagName];
+  }
+
+  get _geaenderteTage() {
+    return this._z.geaendert[this._z.profil];
+  }
+
+  get _anzahlGeaendert() {
+    return this._profile.reduce((summe, p) => summe + this._z.geaendert[p].size, 0);
+  }
+
+  get _grenzen() {
+    const a = this._zustand.attributes;
+    return {
+      min: Number(a.min_temp === undefined ? 5 : a.min_temp),
+      max: Number(a.max_temp === undefined ? 30.5 : a.max_temp),
+      schritt: Number(a.target_temp_step || 0.5)
+    };
+  }
+
+  async _geraetId() {
+    if (this._geraet) return this._geraet;
+    const eintrag = this._hass.entities && this._hass.entities[this._entity];
+    if (eintrag && eintrag.device_id) {
+      this._geraet = eintrag.device_id;
+    } else {
+      const register = await this._hass.callWS({ type: "config/entity_registry/get", entity_id: this._entity });
+      this._geraet = register.device_id;
+    }
+    return this._geraet;
+  }
+
+  async _dienst(dienst, daten, mitAntwort) {
+    const deviceId = await this._geraetId();
+    const ergebnis = await this._hass.callWS({
+      type: "call_service",
+      domain: "homematicip_local",
+      service: dienst,
+      service_data: { device_id: deviceId, ...daten },
+      return_response: mitAntwort
+    });
+    return ergebnis && ergebnis.response;
+  }
+
+  /** schedule_data enthaelt nur das aktive Profil; die anderen kommen vom Geraet. */
+  async _profilLaden(profil) {
+    if (this._z.laedt.has(profil)) return;
+    this._z.laedt.add(profil);
+    delete this._z.fehler[profil];
+    this._zeichnen();
+    try {
+      const antwort = await this._dienst("get_schedule_profile", { profile: profil }, true);
+      if (!antwort || !antwort.MONDAY) throw new Error("Antwort ohne Wochenplan");
+      this._z.wochen[profil] = kopie(antwort);
+    } catch (fehler) {
+      this._z.fehler[profil] = (fehler && fehler.message) || String(fehler);
+    } finally {
+      this._z.laedt.delete(profil);
+      if (this.isConnected) this._zeichnen();
+    }
+  }
+
+  /** Schreibt je geaendertem Tag; bricht beim ersten Fehler ab und behaelt den Rest. */
+  async _speichern() {
+    this._z.speichert = true;
+    this._zeichnen();
+    let gespeichert = 0;
+    try {
+      for (const profil of this._profile) {
+        for (const tagName of WOCHENTAGE.filter((t) => this._z.geaendert[profil].has(t))) {
+          const tag = this._z.wochen[profil][tagName];
+          await this._dienst("set_schedule_weekday", {
+            profile: profil,
+            weekday: tagName,
+            base_temperature: Number(tag.base_temperature),
+            simple_weekday_list: [...tag.periods].sort((a, b) => minutenAus(a.starttime) - minutenAus(b.starttime))
+          }, false);
+          this._z.geaendert[profil].delete(tagName);
+          gespeichert += 1;
+        }
+      }
+      this._melden(`${gespeichert} ${gespeichert === 1 ? "Tag" : "Tage"} gespeichert.`);
+    } catch (fehler) {
+      this._melden(`Speichern fehlgeschlagen: ${(fehler && fehler.message) || fehler}`, true);
+    } finally {
+      this._z.speichert = false;
+      if (this.isConnected) this._zeichnen();
+    }
+  }
+
+  // ------------------------------------------------------- Aenderungen
+
+  _temperaturAendern(index, richtung) {
+    const tag = this._planVon(this._z.tag);
+    const { min, max, schritt } = this._grenzen;
+    const neu = (t) => Math.min(max, Math.max(min, Math.round((Number(t) + richtung * schritt) / schritt) * schritt));
+    if (index === "basis") tag.base_temperature = neu(tag.base_temperature);
+    else tag.periods[index].temperature = neu(tag.periods[index].temperature);
+    this._geaenderteTage.add(this._z.tag);
+  }
+
+  /** Grenzen eines Zeitraums: Ende des vorigen und Beginn des naechsten. */
+  _nachbargrenzen(tag, index) {
+    const p = tag.periods[index];
+    const andere = tag.periods.filter((_, i) => i !== index);
+    return {
+      frueheste: Math.max(0, ...andere.map((q) => minutenAus(q.endtime)).filter((m) => m <= minutenAus(p.starttime))),
+      spaeteste: Math.min(TAGESMINUTEN, ...andere.map((q) => minutenAus(q.starttime)).filter((m) => m >= minutenAus(p.endtime)))
+    };
+  }
+
+  _zeitSetzen(index, kante, minute) {
+    const tag = this._planVon(this._z.tag);
+    const p = tag.periods[index];
+    const { frueheste, spaeteste } = this._nachbargrenzen(tag, index);
+    const von = minutenAus(p.starttime);
+    const bis = minutenAus(p.endtime);
+    const gerundet = Math.round(minute / PROFIL_RASTER_MIN) * PROFIL_RASTER_MIN;
+    if (kante === "von") p.starttime = uhrzeitAus(Math.min(bis - PROFIL_RASTER_MIN, Math.max(frueheste, gerundet)));
+    else p.endtime = uhrzeitAus(Math.max(von + PROFIL_RASTER_MIN, Math.min(spaeteste, gerundet)));
+    this._geaenderteTage.add(this._z.tag);
+  }
+
+  /**
+   * Vorschlag fuer einen neuen Zeitraum: eine Stunde direkt nach dem letzten,
+   * damit er unten in der Liste erscheint, wo der Knopf ist. Sonst die
+   * naechstfruehere Luecke. Null, wenn die Schaltpunkte nicht reichen.
+   */
+  _neuerZeitraum(tag) {
+    const temperatur = Math.min(this._grenzen.max, Number(tag.base_temperature) + 1);
+    return zeitraumAbschnitte(tag)
+      .filter((a) => a.index === null && a.bis - a.von >= PROFIL_RASTER_MIN)
+      .reverse()
+      .map((l) => ({
+        starttime: uhrzeitAus(l.von),
+        endtime: uhrzeitAus(l.von + Math.min(PROFIL_NEU_DAUER_MIN, l.bis - l.von)),
+        temperature: temperatur
+      }))
+      .find((p) => schaltpunkteVon({ ...tag, periods: [...tag.periods, p] }) <= PROFIL_MAX_SCHALTPUNKTE) || null;
+  }
+
+  _kopierenAusfuehren() {
+    const quelle = this._planVon(this._z.tag);
+    this._z.kopierziele.forEach((t) => {
+      this._woche[t] = kopie(quelle);
+      this._geaenderteTage.add(t);
+    });
+    const ziele = WOCHENTAGE.filter((t) => this._z.kopierziele.has(t)).map((t) => this._tagKurz(t)).join(", ");
+    this._melden(`${this._tagLang(this._z.tag)} auf ${ziele} kopiert. Noch nicht gespeichert.`);
+    this._z.kopierziele = new Set();
+    this._z.ansicht = "tag";
+  }
+
+  _schliessenAnfragen() {
+    if (this._anzahlGeaendert && !window.confirm("Ungespeicherte Änderungen verwerfen?")) return;
+    this.schliessen();
+  }
+
+  _melden(text, bleibt) {
+    this._z.meldung = text;
+    clearTimeout(this._meldungTimer);
+    if (bleibt) return;
+    this._meldungTimer = setTimeout(() => {
+      this._z.meldung = "";
+      if (this.isConnected) this._zeichnen();
+    }, PROFIL_MELDUNG_MS);
+  }
+
+  // ------------------------------------------------------- Darstellung
+
+  get _sprache() {
+    return (this._hass.locale && this._hass.locale.language) || "de";
+  }
+
+  // 2024-01-01 war ein Montag.
+  _tagName(tagName, art) {
+    const datum = new Date(Date.UTC(2024, 0, 1 + WOCHENTAGE.indexOf(tagName), 12));
+    return new Intl.DateTimeFormat(this._sprache, { weekday: art, timeZone: "UTC" }).format(datum);
+  }
+
+  _tagKurz(tagName) {
+    return this._tagName(tagName, "short").replace(".", "");
+  }
+
+  _tagLang(tagName) {
+    return this._tagName(tagName, "long");
+  }
+
+  _grad(t) {
+    const trenner = this._sprache.startsWith("de") ? "," : ".";
+    return `${Number(t).toFixed(1).replace(".", trenner)}°`;
+  }
+
+  _dauer(min) {
+    const h = Math.floor(min / 60);
+    const m = min % 60;
+    return h && m ? `${h} h ${m} min` : h ? `${h} h` : `${m} min`;
+  }
+
+  /** Dieselbe feste Farbskala wie der Tagesplan der Karte. */
+  _farbe(t) {
+    const s = this._farbskala;
+    const spanne = Number(s.max_temp) - Number(s.min_temp);
+    const anteil = spanne > 0 ? Math.min(1, Math.max(0, (t - Number(s.min_temp)) / spanne)) : 0;
+    return `color-mix(in oklab, ${cssFarbe(s.max_color)} ${Math.round(anteil * 100)}%, ${cssFarbe(s.min_color)})`;
+  }
+
+  _skala() {
+    const werte = WOCHENTAGE.map((t) => this._planVon(t)).filter(Boolean)
+      .flatMap((t) => [Number(t.base_temperature), ...t.periods.map((p) => Number(p.temperature))]);
+    if (!werte.length) return { unten: 15, oben: 25 };
+    return { unten: Math.min(...werte) - 1, oben: Math.max(...werte) + 1 };
+  }
+
+  /** Tageskurve als Stufen; viewBox 1440 mal 100, gedehnt auf die Breite. */
+  _kurveSvg(tagName, mitAuswahl) {
+    const { unten, oben } = this._skala();
+    const y = (t) => 100 - ((t - unten) / (oben - unten)) * 100;
+    const teile = zeitraumAbschnitte(this._planVon(tagName));
+    const strich = 'vector-effect="non-scaling-stroke"';
+    const marken = [360, 720, 1080].map((m) =>
+      `<line x1="${m}" y1="0" x2="${m}" y2="100" stroke="var(--divider-color)" stroke-width="1" ${strich}/>`).join("");
+    const flaechen = teile.map((a) => {
+      const gewaehlt = mitAuswahl && a.index !== null && this._z.gewaehlt === a.index;
+      return `<rect x="${a.von}" y="${y(a.temp)}" width="${a.bis - a.von}" height="${100 - y(a.temp)}"
+        style="fill: ${this._farbe(a.temp)}" fill-opacity="${gewaehlt ? 0.6 : 0.28}"/>`;
+    }).join("");
+    const linie = teile.map((a, i) => {
+      const naechster = teile[i + 1];
+      const stufe = naechster ? `<line x1="${a.bis}" y1="${y(a.temp)}" x2="${a.bis}" y2="${y(naechster.temp)}"
+        stroke="var(--secondary-text-color)" stroke-opacity="0.5" stroke-width="1" ${strich}/>` : "";
+      return `<line x1="${a.von}" y1="${y(a.temp)}" x2="${a.bis}" y2="${y(a.temp)}"
+        style="stroke: ${this._farbe(a.temp)}" stroke-width="2.5" ${strich}/>${stufe}`;
+    }).join("");
+    return `<svg viewBox="0 0 1440 100" preserveAspectRatio="none">${marken}${flaechen}${linie}</svg>`;
+  }
+
+  _werteHtml(tagName) {
+    const { unten, oben } = this._skala();
+    return zeitraumAbschnitte(this._planVon(tagName))
+      .filter((a) => a.bis - a.von >= 90)
+      .map((a) => `<span class="wert" style="left: ${((a.von + a.bis) / 2 / TAGESMINUTEN) * 100}%;
+        top: ${100 - ((a.temp - unten) / (oben - unten)) * 100}%">${this._grad(a.temp)}</span>`).join("");
+  }
+
+  _tagHtml(tagName, hoehe, gross) {
+    return `<div class="tag" style="height: ${hoehe}px">${this._kurveSvg(tagName, gross)}${gross ? this._werteHtml(tagName) : ""}</div>`;
+  }
+
+  get _zeitachse() {
+    return '<div class="zeitachse"><span>0</span><span>6</span><span>12</span><span>18</span><span>24</span></div>';
+  }
+
+  get _zeitachseEingerueckt() {
+    return `<div class="eingerueckt"><span></span>${this._zeitachse}<span></span></div>`;
+  }
+
+  _profileHtml() {
+    if (this._profile.length < 2) return "";
+    return `<div class="chips">${this._profile.map((p) => `<button type="button" data-profil="${p}"
+      class="${p === this._aktivesProfil ? "aktiv" : ""} ${this._z.geaendert[p].size ? "geaendert" : ""}"
+      aria-pressed="${p === this._z.profil}">${p}</button>`).join("")}</div>`;
+  }
+
+  _tageHtml() {
+    return `<div class="chips">${WOCHENTAGE.map((t) => `<button type="button" data-wahltag="${t}"
+      class="${t === this._heute ? "aktiv" : ""} ${this._geaenderteTage.has(t) ? "geaendert" : ""}"
+      aria-pressed="${t === this._z.tag}">${this._tagKurz(t)}</button>`).join("")}</div>`;
+  }
+
+  _stepperHtml(index, temp) {
+    return `<div class="stepper">
+      <button type="button" data-schritt="-1" data-index="${index}" aria-label="kälter"><ha-icon icon="mdi:minus"></ha-icon></button>
+      <span class="temp">${this._grad(temp)}</span>
+      <button type="button" data-schritt="1" data-index="${index}" aria-label="wärmer"><ha-icon icon="mdi:plus"></ha-icon></button>
+    </div>`;
+  }
+
+  _zeitraeumeHtml() {
+    const tag = this._planVon(this._z.tag);
+    const belegt = schaltpunkteVon(tag);
+    const neu = this._neuerZeitraum(tag);
+    const zeilen = zeitraumAbschnitte(tag).filter((a) => a.index !== null).map((a) => {
+      const offen = this._z.gewaehlt === a.index;
+      return `<div class="zeitraum ${offen ? "gewaehlt" : ""}" style="--farbe: ${this._farbe(a.temp)}" data-zeile="${a.index}">
+        <div>
+          <div class="zeit"><button type="button" data-zeitwahl="von" data-index="${a.index}">${uhrzeitAus(a.von)}</button>–<button
+            type="button" data-zeitwahl="bis" data-index="${a.index}">${uhrzeitAus(a.bis)}</button></div>
+          <div class="unter">${this._dauer(a.bis - a.von)}</div>
+        </div>
+        ${this._stepperHtml(a.index, a.temp)}
+        ${offen ? `<div class="aufgeklappt">
+          <button type="button" class="loeschen" data-aktion="loeschen" data-index="${a.index}">
+            <ha-icon icon="mdi:delete-outline"></ha-icon> Zeitraum löschen</button>
+          <button type="button" class="zuklappen" data-aktion="zuklappen">Fertig</button>
+        </div>` : ""}
+      </div>`;
+    }).join("");
+    return `
+      <div class="titel"><span>Zeiträume</span>
+        <span class="zaehler ${belegt >= PROFIL_MAX_SCHALTPUNKTE ? "voll" : ""}">${belegt} von ${PROFIL_MAX_SCHALTPUNKTE} Schaltpunkten</span></div>
+      ${zeilen || '<p class="hinweis">Keine Zeiträume, den ganzen Tag gilt die Grundtemperatur.</p>'}
+      <button type="button" class="hinzu" data-aktion="hinzufuegen" ${neu ? "" : "disabled"}>${neu
+        ? '<ha-icon icon="mdi:plus"></ha-icon> Zeitraum hinzufügen'
+        : belegt >= PROFIL_MAX_SCHALTPUNKTE ? "Alle 13 Schaltpunkte belegt" : "Kein Platz für einen weiteren Zeitraum"}</button>
+      <div class="titel"><span>Übrige Zeit</span></div>
+      <div class="zeitraum" style="--farbe: ${this._farbe(Number(tag.base_temperature))}">
+        <div><div class="zeit ohne-knopf">Grundtemperatur</div></div>
+        ${this._stepperHtml("basis", tag.base_temperature)}
+      </div>`;
+  }
+
+  /** Lade- oder Fehlerzustand eines Profils, sonst null. */
+  _profilZustandHtml() {
+    const p = this._z.profil;
+    if (this._z.laedt.has(p)) return `<p class="hinweis">Profil ${p} wird vom Gerät geladen …</p>`;
+    if (this._z.fehler[p]) {
+      return `<p class="hinweis fehler">Profil ${p} konnte nicht geladen werden: ${htmlSicher(this._z.fehler[p])}</p>
+        <button type="button" class="hinzu" data-aktion="neu-laden">Erneut laden</button>`;
+    }
+    if (!this._woche) return `<p class="hinweis">Kein Plan vorhanden.</p>`;
+    return null;
+  }
+
+  get _speichernHtml() {
+    const anzahl = this._anzahlGeaendert;
+    const text = this._z.speichert ? "Speichert …" : `Speichern${anzahl ? ` (${anzahl})` : ""}`;
+    return `<button type="button" class="haupt" data-aktion="speichern" ${anzahl && !this._z.speichert ? "" : "disabled"}>${text}</button>`;
+  }
+
+  _tagAnsicht() {
+    const zustand = this._profilZustandHtml();
+    return {
+      titel: `Heizprofil ${htmlSicher(this._name)}`,
+      rechts: zustand ? "" : `<button type="button" class="rundknopf" data-aktion="woche" aria-label="Woche">
+        <ha-icon icon="mdi:calendar-week"></ha-icon></button>`,
+      inhalt: `${this._profileHtml()}${zustand || `${this._tageHtml()}${this._tagHtml(this._z.tag, 120, true)}${this._zeitachse}${this._zeitraeumeHtml()}`}`,
+      fuss: `<button type="button" data-aktion="kopieren" ${zustand ? "disabled" : ""}>Auf Tage kopieren</button>${this._speichernHtml}`
+    };
+  }
+
+  _wochenAnsicht() {
+    return {
+      titel: `Woche ${this._z.profil}`,
+      zurueck: true,
+      inhalt: `${this._profileHtml()}${this._profilZustandHtml() || `<div class="woche">${WOCHENTAGE.map((t) => `
+        <button type="button" class="wochentag ${t === this._heute ? "heute" : ""} ${t === this._z.tag ? "aktuell" : ""}
+          ${this._geaenderteTage.has(t) ? "geaendert" : ""}" data-oeffne="${t}">
+          <span class="name">${this._tagKurz(t)}</span>${this._tagHtml(t, 34, false)}<ha-icon icon="mdi:chevron-right"></ha-icon>
+        </button>`).join("")}</div>${this._zeitachseEingerueckt}`}`,
+      fuss: this._speichernHtml
+    };
+  }
+
+  _kopierAnsicht() {
+    const ziele = this._z.kopierziele;
+    const auswahl = (tage, text) => `<button type="button" data-auswahl="${tage.join(",")}">${text}</button>`;
+    return {
+      titel: `${this._tagLang(this._z.tag)} kopieren`,
+      zurueck: true,
+      inhalt: `
+        <div class="titel"><span>Quelle</span></div>
+        ${this._tagHtml(this._z.tag, 60, false)}
+        <div class="titel"><span>Auf diese Tage</span></div>
+        <div class="schnellwahl">
+          ${auswahl(WERKTAGE, `${this._tagKurz("MONDAY")} bis ${this._tagKurz("FRIDAY")}`)}
+          ${auswahl(WOCHENENDE, `${this._tagKurz("SATURDAY")} und ${this._tagKurz("SUNDAY")}`)}
+          ${auswahl(WOCHENTAGE, "Alle")}
+        </div>
+        <div class="woche">${WOCHENTAGE.map((t) => {
+          const quelle = t === this._z.tag;
+          const an = ziele.has(t);
+          const symbol = quelle ? "mdi:content-copy" : an ? "mdi:checkbox-marked" : "mdi:checkbox-blank-outline";
+          return `<button type="button" class="wochentag ${quelle ? "quelle" : ""}" data-ziel="${t}" ${quelle ? "disabled" : ""}
+            role="checkbox" aria-checked="${an}">
+            <span class="name">${this._tagKurz(t)}</span>${this._tagHtml(t, 34, false)}
+            <ha-icon icon="${symbol}" class="${an ? "an" : ""}"></ha-icon>
+          </button>`;
+        }).join("")}</div>${this._zeitachseEingerueckt}
+        <p class="hinweis">Der Plan der gewählten Tage wird ersetzt, auch die Grundtemperatur.</p>`,
+      fuss: `<button type="button" data-aktion="zurueck">Abbrechen</button>
+        <button type="button" class="haupt" data-aktion="kopieren-ausfuehren" ${ziele.size ? "" : "disabled"}>
+          ${ziele.size ? `Auf ${ziele.size} ${ziele.size === 1 ? "Tag" : "Tage"} kopieren` : "Tage wählen"}</button>`
+    };
+  }
+
+  _zeichnen() {
+    const teile = { tag: () => this._tagAnsicht(), woche: () => this._wochenAnsicht(), kopieren: () => this._kopierAnsicht() }[this._z.ansicht]();
+    const alt = this._blatt.querySelector(".inhalt");
+    const scroll = alt && alt.dataset.ansicht === this._z.ansicht ? alt.scrollTop : 0;
+    this._blatt.innerHTML = `
+      <div class="griff"></div>
+      <div class="kopf ${teile.zurueck ? "mit-zurueck" : ""}">
+        ${teile.zurueck ? `<button type="button" class="rundknopf" data-aktion="zurueck" aria-label="Zurück">
+          <ha-icon icon="mdi:arrow-left"></ha-icon></button>` : ""}
+        <h1>${teile.titel}</h1>
+        ${teile.rechts || ""}
+        <button type="button" class="rundknopf" data-aktion="schliessen" aria-label="Schließen"><ha-icon icon="mdi:close"></ha-icon></button>
+      </div>
+      <div class="inhalt" data-ansicht="${this._z.ansicht}">${teile.inhalt}</div>
+      <div class="fuss">${teile.fuss}</div>
+      <div class="meldung" ${this._z.meldung ? "" : "hidden"}>${htmlSicher(this._z.meldung)}</div>`;
+    this._blatt.querySelector(".inhalt").scrollTop = scroll;
+  }
+
+  // ------------------------------------------------------------ Aufbau
+
+  _aufbauen() {
+    const f = this._farben;
+    this.shadowRoot.innerHTML = `
+      <style>
+        :host {
+          position: fixed; inset: 0; z-index: 1000; display: flex; align-items: flex-end; justify-content: center;
+          font-family: var(--ha-font-family-body, Roboto, sans-serif); color: var(--primary-text-color);
+          --spur: var(--divider-color, rgba(225, 225, 225, 0.12));
+        }
+        *, *::before, *::after { box-sizing: border-box; }
+        button { font: inherit; color: inherit; cursor: pointer; }
+        button:disabled { cursor: default; }
+        ha-icon { --mdc-icon-size: 22px; }
+        .abdunkeln { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.5); }
+        .blatt {
+          position: relative; width: 100%; max-width: 560px; height: 92%;
+          display: flex; flex-direction: column; overscroll-behavior: contain;
+          background: var(--ha-card-background, var(--card-background-color, #1c1c1c));
+          border-radius: 20px 20px 0 0; box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.5);
+          padding-bottom: env(safe-area-inset-bottom);
+        }
+        .griff { width: 40px; height: 4px; border-radius: 2px; background: var(--spur); margin: 8px auto 2px; flex: 0 0 auto; }
+        .kopf { display: flex; align-items: center; gap: 4px; padding: 6px 8px 6px 16px; flex: 0 0 auto; }
+        .kopf.mit-zurueck { padding-left: 4px; }
+        .kopf h1 { font-size: 1.1rem; font-weight: 500; margin: 0; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .rundknopf { width: 44px; height: 44px; border-radius: 50%; border: none; background: transparent;
+          display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; }
+        .inhalt { flex: 1; overflow-y: auto; padding: 0 16px 16px; }
+        .fuss { flex: 0 0 auto; display: flex; gap: 8px; padding: 10px 16px 16px; border-top: 1px solid var(--spur); }
+        .fuss button { flex: 1; height: 48px; border-radius: 12px; border: none; background: var(--spur); font-weight: 500; }
+        .fuss button.haupt { background: var(--primary-color); color: #fff; }
+        .fuss button:disabled { opacity: 0.45; }
+
+        .chips { display: flex; gap: 6px; margin: 4px 0 12px; }
+        .chips button { flex: 1; min-width: 0; height: 40px; border-radius: 10px; border: none;
+          background: var(--spur); font-size: 0.9rem; position: relative; }
+        .chips button[aria-pressed="true"] { background: var(--primary-color); color: #fff; font-weight: 500; }
+        /* Punkt unten: aktives Profil bzw. heute. Punkt oben: ungespeichert. */
+        .chips button.aktiv::after { content: ""; position: absolute; left: 50%; bottom: 4px; width: 4px; height: 4px;
+          margin-left: -2px; border-radius: 50%; background: currentColor; }
+        .chips button.geaendert::before, .wochentag.geaendert .name::after { content: ""; position: absolute;
+          top: 5px; right: 6px; width: 6px; height: 6px; border-radius: 50%; background: ${f.target}; }
+        .titel { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--secondary-text-color);
+          margin: 14px 0 6px; display: flex; justify-content: space-between; gap: 8px; }
+        .titel .zaehler { text-transform: none; letter-spacing: 0; }
+        .titel .zaehler.voll { color: var(--error-color, #db4437); }
+        .hinweis { color: var(--secondary-text-color); font-size: 0.85rem; }
+        .hinweis.fehler { color: var(--error-color, #db4437); }
+
+        .tag { position: relative; border-radius: 10px; background: var(--spur); overflow: hidden; user-select: none; }
+        .tag svg { display: block; width: 100%; height: 100%; }
+        .tag .wert { position: absolute; transform: translate(-50%, -100%); font-size: 0.75rem; padding-bottom: 3px;
+          white-space: nowrap; pointer-events: none; font-variant-numeric: tabular-nums; }
+        .zeitachse { display: flex; justify-content: space-between; font-size: 0.72rem; color: var(--secondary-text-color);
+          margin: 4px 2px 0; font-variant-numeric: tabular-nums; }
+        .eingerueckt { display: grid; grid-template-columns: 34px 1fr 24px; gap: 8px; }
+
+        .woche { display: grid; gap: 6px; }
+        .wochentag { display: grid; grid-template-columns: 34px 1fr 24px; align-items: center; gap: 8px; min-height: 44px;
+          border: none; background: transparent; padding: 2px 0; text-align: left; border-radius: 8px; }
+        .wochentag .name { font-size: 0.9rem; position: relative; padding-right: 10px; }
+        .wochentag.heute .name { color: var(--primary-color); font-weight: 500; }
+        .wochentag.aktuell { background: var(--spur); padding-left: 4px; margin-left: -4px; }
+        .wochentag .tag { height: 34px; border-radius: 7px; }
+        .wochentag ha-icon { color: var(--secondary-text-color); --mdc-icon-size: 20px; }
+        .wochentag ha-icon.an { color: var(--primary-color); }
+        .wochentag.quelle { opacity: 0.55; }
+        .schnellwahl { display: flex; gap: 6px; margin: 4px 0 12px; }
+        .schnellwahl button { flex: 1; height: 36px; border-radius: 18px; border: 1px solid var(--spur);
+          background: transparent; font-size: 0.85rem; }
+
+        .zeitraum { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px; min-height: 56px;
+          padding: 6px 6px 6px 12px; margin-bottom: 6px; border-radius: 12px; background: var(--spur);
+          border-left: 4px solid var(--farbe, transparent); }
+        .zeitraum.gewaehlt { outline: 2px solid var(--primary-color); outline-offset: -2px; }
+        .zeit { display: flex; gap: 4px; align-items: center; font-size: 1rem; font-variant-numeric: tabular-nums; }
+        .zeit.ohne-knopf { padding: 8px 4px; }
+        .zeit button { border: none; background: transparent; padding: 8px 4px; border-radius: 6px; font-size: 1rem; }
+        .unter { font-size: 0.75rem; color: var(--secondary-text-color); padding-left: 4px; }
+        .stepper { display: flex; align-items: center; gap: 2px; }
+        .stepper button { width: 44px; height: 44px; border-radius: 10px; border: none;
+          background: var(--ha-card-background, var(--card-background-color, #1c1c1c));
+          display: inline-flex; align-items: center; justify-content: center; }
+        .stepper .temp { min-width: 58px; text-align: center; font-size: 1.05rem; font-weight: 500; font-variant-numeric: tabular-nums; }
+        .aufgeklappt { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: center; }
+        .loeschen { height: 44px; border: none; background: transparent; color: var(--error-color, #db4437);
+          display: inline-flex; align-items: center; gap: 4px; padding: 0 4px; }
+        .zuklappen { height: 44px; min-width: 96px; border-radius: 10px; border: none; color: var(--primary-color); font-weight: 500;
+          background: var(--ha-card-background, var(--card-background-color, #1c1c1c)); }
+        .hinzu { width: 100%; height: 48px; border-radius: 12px; border: 1px dashed var(--spur); background: transparent;
+          color: var(--secondary-text-color); display: inline-flex; align-items: center; justify-content: center; gap: 4px; }
+        .hinzu:disabled { opacity: 0.5; }
+
+        .meldung { position: absolute; left: 16px; right: 16px; bottom: 84px; padding: 12px 14px; border-radius: 10px;
+          background: #323232; color: #f1f1f1; font-size: 0.9rem; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4); }
+        .meldung[hidden] { display: none; }
+
+        @media (hover: hover) {
+          .rundknopf:hover, .zeit button:hover { background: var(--spur); }
+          .chips button:hover, .stepper button:hover, .fuss button:hover:not(:disabled) { filter: brightness(1.15); }
+        }
+        button:focus-visible { outline: 2px solid ${f.target}; outline-offset: 2px; }
+      </style>
+      <div class="abdunkeln"></div>
+      <div class="blatt" role="dialog" aria-modal="true"></div>`;
+
+    this._blatt = this.shadowRoot.querySelector(".blatt");
+    this.shadowRoot.querySelector(".abdunkeln").addEventListener("click", () => this._schliessenAnfragen());
+    this._blatt.addEventListener("click", (ereignis) => this._klick(ereignis));
+
+    // Unsichtbares Zeitfeld ueber der angetippten Uhrzeit oeffnet die
+    // Zeitauswahl des Geraets. 24:00 kennt es nicht: als Ende gilt 00:00 als 24:00.
+    this._zeitfeld = document.createElement("input");
+    this._zeitfeld.type = "time";
+    this._zeitfeld.step = String(PROFIL_RASTER_MIN * 60);
+    this._zeitfeld.style.cssText = "position: fixed; opacity: 0; pointer-events: none; width: 1px; height: 1px;";
+    this.shadowRoot.appendChild(this._zeitfeld);
+    this._zeitfeld.addEventListener("change", () => {
+      if (!this._zeitwahl || !this._zeitfeld.value) return;
+      let minute = minutenAus(this._zeitfeld.value);
+      if (this._zeitwahl.kante === "bis" && minute === 0) minute = TAGESMINUTEN;
+      this._zeitSetzen(this._zeitwahl.index, this._zeitwahl.kante, minute);
+      this._zeichnen();
+    });
+
+    this._tasteGedrueckt = (ereignis) => {
+      if (ereignis.key === "Escape") this._schliessenAnfragen();
+    };
+    document.addEventListener("keydown", this._tasteGedrueckt);
+  }
+
+  _zeitwahlOeffnen(knopf) {
+    const rahmen = knopf.getBoundingClientRect();
+    this._zeitwahl = { index: Number(knopf.dataset.index), kante: knopf.dataset.zeitwahl };
+    this._zeitfeld.style.left = `${rahmen.left}px`;
+    this._zeitfeld.style.top = `${rahmen.bottom}px`;
+    const text = knopf.textContent.trim();
+    this._zeitfeld.value = text === "24:00" ? "00:00" : text;
+    try {
+      this._zeitfeld.showPicker();
+    } catch (fehler) {
+      this._zeitfeld.focus();
+    }
+  }
+
+  _klick(ereignis) {
+    const ziel = ereignis.target.closest("button, .zeitraum");
+    if (!ziel || ziel.disabled) return;
+    if (ziel.classList.contains("zeitraum") && ereignis.target.closest(".aufgeklappt")) return;
+    const d = ziel.dataset;
+    const z = this._z;
+    if (d.zeitwahl) {
+      this._zeitwahlOeffnen(ziel);
+      return;
+    }
+    if (d.schritt) this._temperaturAendern(d.index === "basis" ? "basis" : Number(d.index), Number(d.schritt));
+    else if (d.profil) {
+      z.profil = d.profil;
+      z.gewaehlt = null;
+      if (!z.wochen[d.profil]) this._profilLaden(d.profil);
+    } else if (d.wahltag) {
+      z.tag = d.wahltag;
+      z.gewaehlt = null;
+    } else if (d.oeffne) {
+      z.tag = d.oeffne;
+      z.ansicht = "tag";
+      z.gewaehlt = null;
+    } else if (d.ziel) {
+      if (z.kopierziele.has(d.ziel)) z.kopierziele.delete(d.ziel);
+      else z.kopierziele.add(d.ziel);
+    } else if (d.auswahl) {
+      const tage = d.auswahl.split(",").filter((t) => t !== z.tag);
+      const alleAn = tage.every((t) => z.kopierziele.has(t));
+      tage.forEach((t) => (alleAn ? z.kopierziele.delete(t) : z.kopierziele.add(t)));
+    } else if (d.aktion === "hinzufuegen") {
+      const tag = this._planVon(z.tag);
+      tag.periods.push(this._neuerZeitraum(tag));
+      z.gewaehlt = tag.periods.length - 1;
+      this._geaenderteTage.add(z.tag);
+    } else if (d.aktion === "loeschen") {
+      this._planVon(z.tag).periods.splice(Number(d.index), 1);
+      z.gewaehlt = null;
+      this._geaenderteTage.add(z.tag);
+    } else if (d.aktion === "zuklappen") z.gewaehlt = null;
+    else if (d.aktion === "woche") z.ansicht = "woche";
+    else if (d.aktion === "kopieren") {
+      z.kopierziele = new Set();
+      z.ansicht = "kopieren";
+    } else if (d.aktion === "kopieren-ausfuehren") this._kopierenAusfuehren();
+    else if (d.aktion === "zurueck") z.ansicht = "tag";
+    else if (d.aktion === "neu-laden") this._profilLaden(z.profil);
+    else if (d.aktion === "speichern") {
+      this._speichern();
+      return;
+    } else if (d.aktion === "schliessen") {
+      this._schliessenAnfragen();
+      return;
+    } else if (d.zeile !== undefined) z.gewaehlt = z.gewaehlt === Number(d.zeile) ? null : Number(d.zeile);
+    else return;
+    this._zeichnen();
+    if (d.aktion === "hinzufuegen") {
+      const zeile = this._blatt.querySelector(`[data-zeile="${z.gewaehlt}"]`);
+      if (zeile) zeile.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }
   }
 }
@@ -1538,6 +2283,7 @@ class ThermostatBarCardEditor extends HTMLElement {
 
 customElements.define("thermostat-bar-card", ThermostatBarCard);
 customElements.define("thermostat-bar-card-editor", ThermostatBarCardEditor);
+customElements.define("thermostat-bar-card-heizprofil", ThermostatHeizprofilBlatt);
 
 window.customCards = window.customCards || [];
 window.customCards.push({
