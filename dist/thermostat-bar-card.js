@@ -1,8 +1,8 @@
-// Thermostat Bar Card 0.3.1
+// Thermostat Bar Card 0.4.0
 // Gebaut aus src/ mit npm run build. Nicht von Hand bearbeiten.
 
 // src/konstanten.js
-var CARD_VERSION = "0.3.1";
+var CARD_VERSION = "0.4.0";
 var IST_FARBE = "var(--primary-color, #009ac7)";
 var WAERME_FARBE = "var(--red-color, #f44336)";
 var STANDARDFARBEN = {

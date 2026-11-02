@@ -10,7 +10,8 @@ Entstanden, weil die eingebaute Thermostat-Karte ihren Rundregler zugleich als B
 
 Die Leiste in der Karte ist **reine Anzeige**. Sie fängt keine Wischgeste ab, deshalb lässt sich über einem Dashboard voller solcher Karten ungestört scrollen, ohne versehentlich eine Temperatur zu verstellen.
 
-- **600 ms halten** öffnet den Bearbeitungsmodus. Bewegt sich der Finger vorher um mehr als sechs Pixel, bricht die Geste ab.
+- **600 ms auf der Leiste halten** öffnet den Bearbeitungsmodus. Bewegt sich der Finger vorher um mehr als sechs Pixel, bricht die Geste ab.
+- **600 ms auf dem Tagesplan halten** öffnet das [Heizprofil](#heizprofil-bearbeiten).
 - Im Bearbeitungsmodus erscheint dieselbe Leiste noch einmal, dort **ziehbar**, darunter große **Plus- und Minus-Flächen** und ein **Fertig**-Knopf.
 - Schließen durch Tippen daneben oder über **Fertig**.
 - Über Tastatur: Leiste fokussieren, dann Eingabe oder Leertaste.
@@ -146,6 +147,21 @@ schedule:
 
 Farben nehmen Theme-Farbnamen von Home Assistant wie `primary`, `red` oder `secondary-text` an und folgen damit dem Theme. Jede andere CSS-Farbangabe wie `#ff9800` geht ebenso.
 
+### Heizprofil bearbeiten
+
+Halten auf dem Tagesplan öffnet die Wochenpläne des Thermostats als Blatt, das von unten hereinfährt und auch auf kleinen Telefonen bedienbar bleibt.
+
+<img src="https://raw.githubusercontent.com/SvMo85/ha-thermostat-bar-card/main/images/heizprofil.png" width="320" alt="Heizprofil: Profile P1 bis P3, Wochentage, Tageskurve und Zeiträume mit Plus- und Minus-Flächen">
+
+- **Profile und Tage:** Es öffnet sich das aktive Profil mit dem heutigen Tag. Der Punkt unter einem Profil oder Tag markiert das aktive Profil und heute. Es erscheinen nur die Profile, die das Gerät meldet.
+- **Zeiträume:** Temperatur über Plus und Minus. Tippen auf eine Uhrzeit öffnet die Zeitauswahl des Telefons. Uhrzeiten rasten auf 5 Minuten wie in OpenCCU, Zeiträume überlappen sich nie.
+- **Schaltpunkte:** Ein Tag hat höchstens 13 Schaltpunkte. Jeder Zeitraum zählt, jede Lücke mit Grundtemperatur ebenso. Die Anzeige „8 von 13 Schaltpunkten“ zählt mit, ist alles belegt, lässt sich kein Zeitraum mehr hinzufügen.
+- **Woche:** Der Kalender oben rechts zeigt die ganze Woche, Tippen auf einen Tag öffnet ihn.
+- **Auf Tage kopieren:** Den gezeigten Tag auf andere Tage übertragen, mit Schnellwahl für Werktage, Wochenende oder alle.
+- **Speichern:** Geänderte Tage tragen einen Punkt. Gespeichert wird erst über „Speichern“, je Tag ein Aufruf von `homematicip_local.set_schedule_weekday`.
+
+Das aktive Profil steht im Attribut `schedule_data`. Die übrigen lädt die Karte beim Antippen über `homematicip_local.get_schedule_profile` vom Gerät, das dauert bei Batteriegeräten einen Moment.
+
 ### Farben
 
 Jeder Wert nimmt eine beliebige CSS-Farbangabe an, also auch Theme-Variablen wie `var(--primary-color)`. Die Vorgaben nutzen die Theme-Farben `--primary-color` für alles, was Ist und Automatik betrifft, und `--red-color` für alles, was heizt.
@@ -196,6 +212,19 @@ Beides kann auseinanderlaufen: Nach einer Absenkung fährt ein Ventil allmählic
 Die Karte ändert beim Verstellen der Temperatur **nicht** den Betriebsmodus. Das ist Absicht: Homematic-IP-Thermostate behalten einen im Automatikbetrieb gesetzten Wert bis zum nächsten Schaltzeitpunkt des Heizprofils bei und kehren danach ins Profil zurück. Wer einen Wert dauerhaft halten will, schaltet über den Knopf auf Heizen.
 
 Die Bedienungssperre am Gerät ist bei Homematic IP ein eigener Geräteparameter und keine Eigenschaft der Klima-Entität. Die passende Schalter-Entität gehört deshalb in `lock_entity`.
+
+## Entwicklung
+
+Der Quellcode liegt nach Themen getrennt unter `src/`. Daraus baut esbuild die eine Datei `dist/thermostat-bar-card.js`, die Home Assistant lädt. Die Datei in `dist/` wird nicht von Hand bearbeitet.
+
+```sh
+npm install
+npm run build   # einmal bauen
+npm run watch   # bei jeder Änderung neu bauen
+npm test        # Unit-Tests mit Abdeckung
+```
+
+Die Prüfung auf GitHub schlägt fehl, wenn `dist/` nicht zum Stand von `src/` passt.
 
 ## Lizenz
 
