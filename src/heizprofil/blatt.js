@@ -1,8 +1,8 @@
 ﻿import { cssFarbe } from "../farben.js";
 import { TAGESMINUTEN } from "../konstanten.js";
 import {
-  PROFIL_MAX_SCHALTPUNKTE, PROFIL_MELDUNG_MS, PROFIL_RASTER_MIN, PROFIL_TAGESZEILE_PX, WERKTAGE, WOCHENENDE, WOCHENTAGE,
-  kopie, minutenAus, neuerZeitraum, schaltpunkteVon, temperaturGeschaltet, uhrzeitAus, zeitGesetzt, zeitraumAbschnitte
+  PROFIL_AKTIVIEREN_WARTEN_MS, PROFIL_MAX_SCHALTPUNKTE, PROFIL_MELDUNG_MS, PROFIL_RASTER_MIN, PROFIL_TAGESZEILE_PX, WERKTAGE, WOCHENENDE, WOCHENTAGE,
+  kopie, minutenAus, neuerZeitraum, presetVonProfil, schaltpunkteVon, temperaturGeschaltet, uhrzeitAus, zeitGesetzt, zeitraumAbschnitte
 } from "./plan.js";
 import { blattStil } from "./stil.js";
 
@@ -12,7 +12,8 @@ const htmlSicher = (text) => String(text).replace(/[&<>"]/g, (z) => ({ "&": "&am
  * Bearbeitet die Wochenplaene eines Thermostats von Homematic(IP) Local als
  * Blatt ueber dem Dashboard. Haengt am body, damit kein Elternelement der
  * Karte es beschneidet. Gelesen wird ueber get_schedule_profile, geschrieben
- * je geaendertem Tag ueber set_schedule_weekday.
+ * je geaendertem Tag ueber set_schedule_weekday. Das aktive Profil wechselt
+ * ueber das Preset week_program_N; als aktiv gilt erst, was das Geraet meldet.
  */
 export class ThermostatHeizprofilBlatt extends HTMLElement {
   constructor() {
@@ -35,7 +36,7 @@ export class ThermostatHeizprofilBlatt extends HTMLElement {
       ansicht: "tag", profil: aktiv, tag: heute, gewaehlt: null, kopierziele: new Set(),
       wochen: { [aktiv]: a.schedule_data ? kopie(a.schedule_data) : null },
       geaendert: Object.fromEntries(this._profile.map((p) => [p, new Set()])),
-      laedt: new Set(), fehler: {}, speichert: false, meldung: ""
+      laedt: new Set(), fehler: {}, speichert: false, aktiviert: null, meldung: ""
     };
     this._aufbauen();
     document.body.appendChild(this);
@@ -45,10 +46,20 @@ export class ThermostatHeizprofilBlatt extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
+    const gemeldet = this._zustand && this._zustand.attributes.current_schedule_profile;
+    if (!gemeldet || gemeldet === this._aktivesProfil) return;
+    this._aktivesProfil = gemeldet;
+    if (this._z.aktiviert === gemeldet) {
+      clearTimeout(this._aktivierenTimer);
+      this._z.aktiviert = null;
+      this._melden(`${gemeldet} ist jetzt aktiv.`);
+    }
+    this._zeichnen();
   }
 
   schliessen() {
     clearTimeout(this._meldungTimer);
+    clearTimeout(this._aktivierenTimer);
     document.removeEventListener("keydown", this._tasteGedrueckt);
     this.remove();
   }
@@ -74,6 +85,10 @@ export class ThermostatHeizprofilBlatt extends HTMLElement {
 
   get _anzahlGeaendert() {
     return this._profile.reduce((summe, p) => summe + this._z.geaendert[p].size, 0);
+  }
+
+  get _beschaeftigt() {
+    return this._z.speichert || this._z.aktiviert !== null;
   }
 
   get _grenzen() {
@@ -155,6 +170,33 @@ export class ThermostatHeizprofilBlatt extends HTMLElement {
     }
   }
 
+  /**
+   * Der Dienst meldet auch dann Erfolg, wenn am Geraet nichts passiert. Bestaetigt
+   * ist der Wechsel erst, wenn current_schedule_profile folgt (siehe set hass).
+   */
+  async _profilAktivieren() {
+    const profil = this._z.profil;
+    const beenden = (text) => {
+      this._z.aktiviert = null;
+      this._melden(text, true);
+      if (this.isConnected) this._zeichnen();
+    };
+    this._z.aktiviert = profil;
+    this._zeichnen();
+    this._aktivierenTimer = setTimeout(
+      () => beenden(`Das Thermostat hat ${profil} noch nicht bestätigt.`), PROFIL_AKTIVIEREN_WARTEN_MS
+    );
+    try {
+      await this._hass.callService("climate", "set_preset_mode", {
+        entity_id: this._entity,
+        preset_mode: presetVonProfil(profil, this._zustand.attributes.preset_modes)
+      });
+    } catch (fehler) {
+      clearTimeout(this._aktivierenTimer);
+      beenden(`Aktivieren fehlgeschlagen: ${(fehler && fehler.message) || fehler}`);
+    }
+  }
+
   // ------------------------------------------------------- Aenderungen
 
   _temperaturAendern(index, richtung) {
@@ -202,6 +244,7 @@ export class ThermostatHeizprofilBlatt extends HTMLElement {
   }
 
   _schliessenAnfragen() {
+    if (this._beschaeftigt) return;
     if (this._anzahlGeaendert && !window.confirm("Ungespeicherte Änderungen verwerfen?")) return;
     this.schliessen();
   }
@@ -378,6 +421,23 @@ export class ThermostatHeizprofilBlatt extends HTMLElement {
     return `<button type="button" class="haupt" data-aktion="speichern" ${anzahl && !this._z.speichert ? "" : "disabled"}>${text}</button>`;
   }
 
+  /** Speichern schreibt alle Profile; deshalb verdraengen offene Aenderungen in jedem Profil das Aktivieren. */
+  get _hauptknopfHtml() {
+    const p = this._z.profil;
+    const aktivierbar = !this._anzahlGeaendert && p !== this._aktivesProfil
+      && presetVonProfil(p, this._zustand.attributes.preset_modes);
+    if (!aktivierbar) return this._speichernHtml;
+    const wartet = this._z.aktiviert === p;
+    return `<button type="button" class="haupt" data-aktion="aktivieren" ${wartet ? "disabled" : ""}>${wartet ? `Aktiviert ${p} …` : `${p} aktivieren`}</button>`;
+  }
+
+  /** Solange das Geraet arbeitet, nimmt nur diese Flaeche Klicks an. */
+  get _sperreHtml() {
+    if (!this._beschaeftigt) return "";
+    const text = this._z.speichert ? "Speichert …" : `Aktiviert ${this._z.aktiviert} …`;
+    return `<div class="sperre" role="status"><div class="sperre-text"><span class="lader"></span>${text}</div></div>`;
+  }
+
   _tagAnsicht() {
     const zustand = this._profilZustandHtml();
     return {
@@ -385,7 +445,7 @@ export class ThermostatHeizprofilBlatt extends HTMLElement {
       rechts: zustand ? "" : `<button type="button" class="rundknopf" data-aktion="woche" aria-label="Woche">
         <ha-icon icon="mdi:calendar-week"></ha-icon></button>`,
       inhalt: `${this._profileHtml()}${zustand || `${this._tageHtml()}${this._tagHtml(this._z.tag, 120, true)}${this._zeitachse}${this._zeitraeumeHtml()}`}`,
-      fuss: `<button type="button" data-aktion="kopieren" ${zustand ? "disabled" : ""}>Auf Tage kopieren</button>${this._speichernHtml}`
+      fuss: `<button type="button" data-aktion="kopieren" ${zustand ? "disabled" : ""}>Auf Tage kopieren</button>${this._hauptknopfHtml}`
     };
   }
 
@@ -398,7 +458,7 @@ export class ThermostatHeizprofilBlatt extends HTMLElement {
           ${this._geaenderteTage.has(t) ? "geaendert" : ""}" data-oeffne="${t}">
           <span class="name">${this._tagKurz(t)}</span>${this._tagHtml(t, PROFIL_TAGESZEILE_PX, false)}<ha-icon icon="mdi:chevron-right"></ha-icon>
         </button>`).join("")}</div>${this._zeitachseEingerueckt}`}`,
-      fuss: this._speichernHtml
+      fuss: this._hauptknopfHtml
     };
   }
 
@@ -474,7 +534,8 @@ export class ThermostatHeizprofilBlatt extends HTMLElement {
       </div>
       <div class="inhalt" data-ansicht="${this._z.ansicht}">${teile.inhalt}</div>
       <div class="fuss">${teile.fuss}</div>
-      <div class="meldung" ${this._z.meldung ? "" : "hidden"}>${htmlSicher(this._z.meldung)}</div>`;
+      <div class="meldung" ${this._z.meldung ? "" : "hidden"}>${htmlSicher(this._z.meldung)}</div>
+      ${this._sperreHtml}`;
     this._blatt.querySelector(".inhalt").scrollTop = scroll;
   }
 
@@ -528,7 +589,7 @@ export class ThermostatHeizprofilBlatt extends HTMLElement {
 
   _klick(ereignis) {
     const ziel = ereignis.target.closest("button, .zeitraum");
-    if (!ziel || ziel.disabled) return;
+    if (!ziel || ziel.disabled || this._beschaeftigt) return;
     if (ziel.classList.contains("zeitraum") && ereignis.target.closest(".aufgeklappt")) return;
     const d = ziel.dataset;
     const z = this._z;
@@ -582,6 +643,9 @@ export class ThermostatHeizprofilBlatt extends HTMLElement {
     else if (d.aktion === "ziel-neu-laden") this._profilLaden(z.kopierProfil);
     else if (d.aktion === "speichern") {
       this._speichern();
+      return;
+    } else if (d.aktion === "aktivieren") {
+      this._profilAktivieren();
       return;
     } else if (d.aktion === "schliessen") {
       this._schliessenAnfragen();

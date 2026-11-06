@@ -1,4 +1,4 @@
-﻿export const CARD_VERSION = "1.0.0";
+﻿export const CARD_VERSION = "1.1.0";
 
 // Ein Blau fuer Ist und Automatik, ein Rot fuer alles, was heizt. Beide sind
 // Theme-Farben von Home Assistant und folgen damit dem eingestellten Theme.

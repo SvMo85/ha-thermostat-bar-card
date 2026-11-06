@@ -155,6 +155,8 @@ Halten auf dem Tagesplan öffnet die Wochenpläne des Thermostats als Blatt, das
 <img src="https://raw.githubusercontent.com/SvMo85/ha-thermostat-bar-card/main/images/heizprofil.png" width="320" alt="Heizprofil: Profile P1 bis P3, Wochentage, Tageskurve und Zeiträume mit Plus- und Minus-Flächen">
 
 - **Profile und Tage:** Es öffnet sich das aktive Profil mit dem heutigen Tag. Der Punkt unter einem Profil oder Tag markiert das aktive Profil und heute. Es erscheinen nur die Profile, die das Gerät meldet.
+- **Profil wechseln:** Ist ein anderes als das aktive Profil gewählt und nichts ungespeichert, steht unten „P2 aktivieren“ statt „Speichern“. Das schaltet über `climate.set_preset_mode` mit `week_program_2` sofort um. Als aktiv gilt das Profil, sobald das Thermostat es meldet. Bietet das Gerät dieses Preset nicht an, fehlt der Knopf.
+- **Während Speichern und Aktivieren** ist das Blatt gesperrt, weil beides mehrere Sekunden dauern kann.
 - **Zeiträume:** Temperatur über Plus und Minus. Tippen auf eine Uhrzeit öffnet die Zeitauswahl des Telefons. Uhrzeiten rasten auf 5 Minuten wie in OpenCCU, Zeiträume überlappen sich nie.
 - **Schaltpunkte:** Ein Tag hat höchstens 13 Schaltpunkte. Jeder Zeitraum zählt, jede Lücke mit Grundtemperatur ebenso. Die Anzeige „8 von 13 Schaltpunkten“ zählt mit, ist alles belegt, lässt sich kein Zeitraum mehr hinzufügen.
 - **Woche:** Der Kalender oben rechts zeigt die ganze Woche, Tippen auf einen Tag öffnet ihn.

@@ -11,6 +11,7 @@ export const PROFIL_MAX_SCHALTPUNKTE = 13;
 export const PROFIL_NEU_DAUER_MIN = 60;
 export const PROFIL_MELDUNG_MS = 2500;
 export const PROFIL_TAGESZEILE_PX = 43;
+export const PROFIL_AKTIVIEREN_WARTEN_MS = 30000;
 
 export const kopie = (wert) => JSON.parse(JSON.stringify(wert));
 export const minutenAus = (text) => {
@@ -18,6 +19,13 @@ export const minutenAus = (text) => {
   return h * 60 + m;
 };
 export const uhrzeitAus = (min) => `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
+
+/** Preset, das ein Profil aktiviert: P2 ist week_program_2. Null, wenn das Geraet es nicht anbietet. */
+export function presetVonProfil(profil, presetModes) {
+  const nummer = /^P(\d+)$/.exec(String(profil));
+  const preset = nummer && `week_program_${nummer[1]}`;
+  return preset && (presetModes || []).includes(preset) ? preset : null;
+}
 
 /** Lueckenlose Abschnitte 0 bis 1440; Luecken tragen die Grundtemperatur und index null. */
 export function zeitraumAbschnitte(tag) {

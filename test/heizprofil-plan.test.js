@@ -1,10 +1,25 @@
 ﻿import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  neuerZeitraum, schaltpunkteVon, temperaturGeschaltet, zeitGesetzt, zeitraumAbschnitte
+  neuerZeitraum, presetVonProfil, schaltpunkteVon, temperaturGeschaltet, zeitGesetzt, zeitraumAbschnitte
 } from "../src/heizprofil/plan.js";
 
 const P = (starttime, endtime, temperature) => ({ starttime, endtime, temperature });
+
+// Echte preset_modes des Thermostats im Kinderzimmer
+const PRESETS = ["boost", "none", "week_program_1", "week_program_2", "week_program_3"];
+
+test("Wenn das Geraet das Wochenprogramm anbietet dann aktiviert es das gleichnamige Profil", () => {
+  assert.equal(presetVonProfil("P2", PRESETS), "week_program_2");
+});
+
+test("Wenn das Geraet nur drei Wochenprogramme hat dann gibt es fuer P4 kein Preset", () => {
+  assert.equal(presetVonProfil("P4", PRESETS), null);
+});
+
+test("Wenn das Geraet keine Presets meldet dann gibt es kein Preset", () => {
+  assert.equal(presetVonProfil("P1", undefined), null);
+});
 
 // Echter Werktag des Kinderzimmers aus schedule_data
 const kinderzimmerWerktag = () => ({

@@ -95,6 +95,15 @@ export function blattStil(f) {
           background: #323232; color: #f1f1f1; font-size: 0.9rem; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4); }
         .meldung[hidden] { display: none; }
 
+        .sperre { position: absolute; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center;
+          background: rgba(0, 0, 0, 0.35); border-radius: inherit; cursor: wait; }
+        .sperre-text { display: flex; align-items: center; gap: 10px; padding: 12px 18px; border-radius: 12px;
+          background: #323232; color: #f1f1f1; font-size: 0.95rem; font-weight: 500; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4); }
+        .lader { width: 18px; height: 18px; border-radius: 50%; border: 2px solid currentColor; border-top-color: transparent;
+          animation: lader-dreht 900ms linear infinite; }
+        @keyframes lader-dreht { to { transform: rotate(360deg); } }
+        @media (prefers-reduced-motion: reduce) { .lader { animation: none; } }
+
         @media (hover: hover) {
           .rundknopf:hover, .zeit button:hover { background: var(--spur); }
           .chips button:hover, .stepper button:hover, .fuss button:hover:not(:disabled) { filter: brightness(1.15); }
